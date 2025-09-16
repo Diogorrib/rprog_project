@@ -89,27 +89,31 @@ class Tutorial (object):
 
     if self.mac_to_port.get(packet.dst):
       # Send packet out the associated port
-      self.resend_packet(packet_in, self.mac_to_port[packet.dst])
+      #self.resend_packet(packet_in, self.mac_to_port[packet.dst])
+      log.debug("Installing flow for %s.%i -> %s.%i" % (packet.src, packet_in.in_port,
+                                           packet.dst, self.mac_to_port[packet.dst]))
 
-      # Once you have the above working, try pushing a flow entry
-      # instead of resending the packet (comment out the above and
-      # uncomment and complete the below.)
+      msg = of.ofp_flow_mod()
 
-      #log.debug("Installing flow...")
-      # Maybe the log statement should have source/destination/port?
+      # Set fields to match received packet
+      msg.match = of.ofp_match.from_packet(packet, packet_in.in_port)
 
-      #msg = of.ofp_flow_mod()
-      #
-      ## Set fields to match received packet
-      #msg.match = of.ofp_match.from_packet(packet)
-      #
-      #< Set other fields of flow_mod (timeouts? buffer_id?) >
-      #
-      #< Add an output action, and send -- similar to resend_packet() >
+      # Set other fields of flow_mod
+      msg.idle_timeout = 10
+      msg.hard_timeout = 30
+      if packet_in.buffer_id and packet_in.buffer_id != -1:
+          msg.buffer_id = packet_in.buffer_id
+      else:
+          msg.data = packet_in.ofp
+
+      # Output action and send
+      out_port = self.mac_to_port[packet.dst]
+      action = of.ofp_action_output(port=out_port)
+      msg.actions.append(action)
+      self.connection.send(msg)
 
     else:
       # Flood the packet out everything but the input port
-      # This part looks familiar, right?
       self.resend_packet(packet_in, of.OFPP_ALL)
 
 
@@ -125,8 +129,6 @@ class Tutorial (object):
 
     packet_in = event.ofp # The actual ofp_packet_in message.
 
-    # Comment out the following line and uncomment the one after
-    # when starting the exercise.
     #self.act_like_hub(packet, packet_in)
     self.act_like_switch(packet, packet_in)
 
