@@ -14,9 +14,14 @@
 
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
+import random
 
 log = core.getLogger()
 
+IDLE_TIMEOUT = 10
+HARD_TIMEOUT = 30
+
+FAST_TO_SLOW_RATIO = 2
 SLOW_PATH = [1, 2, 3, 6]
 FAST_PATH = [1, 4, 5, 6]
 
@@ -35,6 +40,37 @@ topology_links = { # dpid1, port1, dpid2, port2
 neighbor_to_port_map = {}
 port_to_neighbor_map = {}
 switches = {}
+
+flow_cookies = { "fast": set(), "slow": set() }
+
+curr_cookie = 0
+def alloc_cookie():
+    global curr_cookie
+    curr_cookie += 1
+    return curr_cookie
+
+
+def install_flow_across_path (path, packet, packet_in, curr_index, cookie):
+  """ Installs flow entries across the given path. """
+  curr_dpid = path[curr_index] # save the switch DPID that sent the packet_in
+  if curr_index != 0:
+    path = list(reversed(path))
+
+  # Install flow in one way but reverse order to avoid flow table misses in the following switches
+  for dpid in reversed(path):
+    switch = switches[dpid]
+
+    i = path.index(dpid)
+    in_port = packet_in.in_port if i == 0 else switch.get_port(path[i - 1])
+    out_port = switch.mac_to_port.get(packet.dst) if i == len(path) - 1 else switch.get_port(path[i + 1])
+
+    if not in_port or not out_port:
+      log.warning("Cannot install flow on switch %s: missing port info" % dpid)
+      continue # this will lead to flow table miss on the switch
+
+    c = cookie if dpid == curr_dpid else None
+    switch.install_flow(packet, packet_in, in_port, out_port, cookie=c)
+
 
 class SwitchHandler (object):
   """
@@ -61,23 +97,53 @@ class SwitchHandler (object):
     return neighbor_to_port_map[self.dpid].get(dpid)
 
 
-  def resend_packet (self, packet_in, out_port):
+  def resend_packets (self, packet_in, out_ports):
     """
     Instructs the switch to resend a packet that it had sent to us.
     "packet_in" is the ofp_packet_in object the switch had sent to us.
+    "out_ports" is a list of ports to send the packet out on.
     """
     msg = of.ofp_packet_out()
     msg.in_port = packet_in.in_port
-    msg.buffer_id = of.NO_BUFFER
+    msg.buffer_id = None
     msg.data = packet_in.data
 
-    log.debug("  sending packet out port %s" % (out_port,))
-    msg.actions.append(of.ofp_action_output(port = out_port))
+    for p in out_ports:
+      log.debug("  sending packet out port %s" % (p,))
+      msg.actions.append(of.ofp_action_output(port = p))
     self.connection.send(msg)
 
 
-  def forward_packet (self, packet, packet_in):
+  def learn_mac (self, mac, port):
+    self.mac_to_port[mac] = port
+
+
+  def forward_packet (self, packet, packet_in, out_port):
     pass # abstract - to be implemented in subclasses
+
+
+  def install_flow (self, packet, packet_in, in_port, out_port, require_data=False, cookie=None):
+    msg = of.ofp_flow_mod()
+    msg.match = of.ofp_match.from_packet(packet, in_port)
+
+    log.debug("Installing flow on switch %s: %s.%i -> %s.%i" % (
+      self.dpid, packet.src, in_port, packet.dst, out_port))
+
+    msg.idle_timeout = IDLE_TIMEOUT
+    msg.hard_timeout = HARD_TIMEOUT
+    if cookie:
+      msg.cookie = cookie
+      msg.flags = of.OFPFF_SEND_FLOW_REM
+
+    if not require_data and not cookie:
+      msg.buffer_id = None
+    elif packet_in.buffer_id is not None and packet_in.buffer_id != -1:
+      msg.buffer_id = packet_in.buffer_id 
+    else:
+      msg.data = packet_in
+
+    msg.actions.append(of.ofp_action_output(port=out_port))
+    self.connection.send(msg)
 
 
   def _handle_PacketIn (self, event):
@@ -87,16 +153,26 @@ class SwitchHandler (object):
       return
 
     packet_in = event.ofp # The actual ofp_packet_in message.
-    self.mac_to_port[packet.src] = packet_in.in_port # FIXME - sometimes mac can be in 2 ports (edge switch)
+    self.learn_mac(packet.src, packet_in.in_port)
 
-    if self.mac_to_port.get(packet.dst):
-      log.debug("Switch %s: Forwarding %s.%i -> %s.%i" % (self.dpid,
-                  packet.src, packet_in.in_port, packet.dst,
-                  self.mac_to_port[packet.dst]))
-      self.resend_packet(packet_in, self.mac_to_port[packet.dst])
+    out_port = self.mac_to_port.get(packet.dst)
+    if out_port and out_port != -1:
+      # this flow is not in any path or was not installed since the switch didn't know the dst MAC
+      self.install_flow(packet, packet_in, packet_in.in_port, out_port, require_data=True)
       return
 
-    self.forward_packet(packet, packet_in)
+    log.debug("Switch %s: Received %s.%i -> %s on port %s" % (self.dpid,
+                packet.src, packet_in.in_port, packet.dst, packet_in.in_port))
+    self.forward_packet(packet, packet_in, out_port)
+
+
+  def _handle_FlowRemoved (self, event):
+    cookie = event.ofp.cookie
+    flow_cookies["fast"].discard(cookie)
+    flow_cookies["slow"].discard(cookie)
+
+    log.debug("Flow with COOKIE %s REMOVED from switch %s" % (cookie, self.dpid))
+    log.debug("  Remaining flows: FAST %d | SLOW %d" % (len(flow_cookies["fast"]), len(flow_cookies["slow"])))
 
 
 class EdgeSwitchHandler (SwitchHandler):
@@ -107,34 +183,55 @@ class EdgeSwitchHandler (SwitchHandler):
     """ Floods the packet out all ports except the input port and
         neighboring switches (unless next_hop is specified). """
     neighbor_ports = set(port_to_neighbor_map[self.dpid].keys())
+    ports_to_flood = []
     for p, _ in self.connection.ports.iteritems():
       if p == packet_in.in_port: continue
       if p <= 0 or p > of.OFPP_MAX: continue
       if (not next_hop or p != next_hop) and p in neighbor_ports: continue
+      ports_to_flood.append(p)
 
-      log.debug("  flooding ARP request on port %s" % (p,))
-      self.resend_packet(packet_in, p)
+    self.resend_packets(packet_in, ports_to_flood)
 
 
-  def forward_packet (self, packet, packet_in):
-    if packet.type == packet.ARP_TYPE:
-      path = FAST_PATH
-      log.debug("Switch %s: ARP %s: %s -> %s on port %s from %s" % (
-          self.dpid, "request" if packet.payload.opcode==1 else "reply",
-          packet.src, packet.dst, packet_in.in_port,
-          self.get_neighbor(packet_in.in_port)))
+  def learn_mac (self, mac, port):
+    if port in port_to_neighbor_map[self.dpid]:
+      self.mac_to_port[mac] = -1 # MAC is on a neighboring switch thus it can follow 2 different paths for QoS
+    else:
+      super(EdgeSwitchHandler, self).learn_mac(mac, port) # MAC is on a host thus it can follow only one path
 
-      # If the ARP came from a switch, flood it to hosts only
+
+  def get_next_hop (self, path):
+    """ Utility to get the next hop switch's port number for a given path. """
+    curr_index = path.index(self.dpid)
+    next_hop = path[curr_index + 1] if curr_index == 0 else path[curr_index - 1]
+    return self.get_port(next_hop)
+
+
+  def choose_path (self):
+    cookie = alloc_cookie()
+    if len(flow_cookies["fast"]) <= FAST_TO_SLOW_RATIO * len(flow_cookies["slow"]):
+      flow_cookies["fast"].add(cookie)
+      log.debug("Installing flow with COOKIE %s across FAST path" % cookie)
+      return FAST_PATH, cookie
+    flow_cookies["slow"].add(cookie)
+    log.debug("Installing flow with COOKIE %s across SLOW path" % cookie)
+    return SLOW_PATH, cookie
+
+
+  def forward_packet (self, packet, packet_in, out_port):
+    if not out_port: # generalized to unknown port (not only ARP) - old version below
+    #if packet.type == packet.ARP_TYPE and packet.payload.opcode == packet.payload.REQUEST:
+      # If the ARP request came from a switch, flood it to hosts only
       if self.get_neighbor(packet_in.in_port):
         self.flood(packet_in)
         return
 
-      # Otherwise, send it along the path while also flooding it to hosts
-      curr_index = path.index(self.dpid)
-      next_hop = path[curr_index + 1] if curr_index == 0 else path[curr_index - 1]
-      self.flood(packet_in, self.get_port(next_hop))
-    else:
-      log.debug("WHAT DO I DO WITH THIS NON-ARP PACKET?!?!")
+      # Otherwise, send it along the probabilistic path and flood to hosts
+      path = FAST_PATH if random.random() < 2/3 else SLOW_PATH
+      self.flood(packet_in, self.get_next_hop(path))
+    else: # port is -1 i.e. known but can follow 2 paths
+      path, cookie = self.choose_path()
+      install_flow_across_path(path, packet, packet_in, path.index(self.dpid), cookie)
 
 
 class CoreSwitchHandler (SwitchHandler):
@@ -144,30 +241,11 @@ class CoreSwitchHandler (SwitchHandler):
   """
   def flood (self, packet_in):
     """ Normal flooding given absence of loops in core. """
-    self.resend_packet(packet_in, of.OFPP_FLOOD)
+    self.resend_packets(packet_in, (of.OFPP_FLOOD,))
 
 
-  def forward_packet (self, packet, packet_in):
-    if packet.type == packet.ARP_TYPE:
-      path = FAST_PATH
-      log.debug("Switch %s: ARP %s: %s -> %s on port %s from %s" % (
-          self.dpid, "request" if packet.payload.opcode==1 else "reply",
-          packet.src, packet.dst, packet_in.in_port,
-          self.get_neighbor(packet_in.in_port)))
-
-      """ prev = self.get_neighbor(packet_in.in_port)
-      prev_index = path.index(prev) if prev else None
-      curr_index = path.index(self.dpid)
-
-      next_hop = path[curr_index + 1] if prev_index < curr_index else path[curr_index - 1]
-      out_port = self.get_port(next_hop)
-      self.resend_packet(packet_in, out_port) """
-
-      # One entry and one exit - just flood
-      self.flood(packet_in)
-
-    else:
-      log.debug("WHAT DO I DO WITH THIS NON-ARP PACKET?!?!")
+  def forward_packet (self, packet, packet_in, out_port):
+    self.flood(packet_in)
 
 
 
