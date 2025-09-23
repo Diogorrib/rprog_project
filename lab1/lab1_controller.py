@@ -28,14 +28,14 @@ FAST_PATH = [1, 4, 5, 6]
 EDGE_SWITCHES = {1, 6}
 CORE_SWITCHES = {2, 3, 4, 5}
 
-topology_links = { # dpid1, port1, dpid2, port2
+topology_links = [ # dpid1, port1, dpid2, port2
   (1,2,2,1),
   (2,2,3,1),
   (3,2,6,1),
   (1,3,4,1),
   (4,2,5,1),
   (5,2,6,2)
-}
+]
 
 neighbor_to_port_map = {}
 port_to_neighbor_map = {}
@@ -45,9 +45,9 @@ flow_cookies = { "fast": set(), "slow": set() }
 
 curr_cookie = 0
 def alloc_cookie():
-    global curr_cookie
-    curr_cookie += 1
-    return curr_cookie
+  global curr_cookie
+  curr_cookie += 1
+  return curr_cookie
 
 
 def install_flow_across_path (path, packet, packet_in, curr_index, cookie):
@@ -219,8 +219,7 @@ class EdgeSwitchHandler (SwitchHandler):
 
 
   def forward_packet (self, packet, packet_in, out_port):
-    if not out_port: # generalized to unknown port (not only ARP) - old version below
-    #if packet.type == packet.ARP_TYPE and packet.payload.opcode == packet.payload.REQUEST:
+    if not out_port: # generalized to unknown port (not only ARP)
       # If the ARP request came from a switch, flood it to hosts only
       if self.get_neighbor(packet_in.in_port):
         self.flood(packet_in)
