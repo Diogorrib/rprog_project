@@ -35,7 +35,17 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
-// TODO: Define the filter and UDP headers here.
+header filter_t {
+    bit<8>  susp;
+    bit<8>  proto;
+}
+
+header udp_t {
+    bit<16>     srcPort;
+    bit<16>     dstPort;
+    bit<16>     length;
+    bit<16>     checksum;
+}
 
 struct metadata {
     /* empty */
@@ -44,8 +54,8 @@ struct metadata {
 struct headers {
     ethernet_t   ethernet;
     ipv4_t       ipv4;
-
-    // TODO: instantiate the filter and udp headers here
+    filter_t     filter;
+    udp_t        udp;
 }
 
 /*************************************************************************
@@ -71,16 +81,24 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        /* TODO: transition to either parsing the 
-                 filter header or accept depending
-                 on hdr.ipv4.protocol
-        */ 
+        transition select(hdr.ipv4.protocol) {
+            PROTO_FILTER: parse_filter;
+            default: accept;
+        }
     }
 
-    /* TODO: add two parser states, one for parsing
-             the filter header and one for parsing
-             the UDP header
-    */
+    state parse_filter {
+        packet.extract(hdr.filter);
+        transition select(hdr.filter.proto) {
+            PROTO_UDP: parse_udp;
+            default: accept;
+        }
+    }
+
+    state parse_udp {
+        packet.extract(hdr.udp);
+        transition accept;
+    }
 }
 
 /*************************************************************************
