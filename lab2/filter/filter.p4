@@ -118,7 +118,7 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
-    action mark_susp() {
+    action mark_suspicious() {
         hdr.filter.susp = 1;
     }
 
@@ -152,7 +152,7 @@ control MyIngress(inout headers hdr,
             hdr.udp.srcPort: exact;
         }
         actions = {
-            mark_susp;
+            mark_suspicious;
             NoAction;
         }
         size = 1024;

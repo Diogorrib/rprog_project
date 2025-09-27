@@ -100,15 +100,14 @@ def writeFilterRule(p4info_helper, sw, src_ip_addr, src_port):
     :param src_ip_addr: the source IP to match
     :param src_port: the src UDP port to match
     """
-
-    # TODO: similar to writeForwardingRule,
-    #       create a rule to install in the 
-    #       filter table that was defined in 
-    #       the P4 program. Make sure that the
-    #       name of the table, keys, and actions
-    #       match what is specified in the P4 
-    #       program.
-    
+    table_entry = p4info_helper.buildTableEntry(
+        table_name="MyIngress.filter_table",
+        action_name="MyIngress.mark_suspicious",
+        match_fields={
+            "hdr.ipv4.srcAddr": (src_ip_addr),
+            "hdr.udp.srcPort": (src_port)
+        })
+    sw.WriteTableEntry(table_entry)
     print("Installed filter rule for (%s, %d) on %s" % (src_ip_addr, src_port, sw.name))
 
 def writeAllFilterRules(p4info_helper, sw_list):
