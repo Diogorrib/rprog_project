@@ -118,15 +118,9 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
-    /* TODO: define an action to set the
-             susp field in the filter header
-    */      
-
-    /* TODO: define a table that matches on
-             source IP address and UDP source
-             port, and applies the above actions
-             as an option
-    */
+    action mark_susp() {
+        hdr.filter.susp = 1;
+    }
 
     action drop() {
         mark_to_drop(standard_metadata);
@@ -152,13 +146,25 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
+    table filter_table {
+        key = {
+            hdr.ipv4.srcAddr: exact;
+            hdr.udp.srcPort: exact;
+        }
+        actions = {
+            mark_susp;
+            NoAction;
+        }
+        size = 1024;
+        default_action = NoAction();
+    }
+
     apply {
         if (hdr.ipv4.isValid()) {
 
-            /* TODO: Check if the filter and UDP headers
-                     have been parsed. If yes, apply
-                     the filter table
-            */
+            if (hdr.filter.isValid() && hdr.udp.isValid()) {
+                filter_table.apply();
+            }
 
             ipv4_exact.apply();
         }
@@ -207,10 +213,8 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);
-        /* TODO: use the emit function to
-                 to emit the filter and udp
-                 headers as well
-        */
+        packet.emit(hdr.filter);
+        packet.emit(hdr.udp);
     }
 }
 
