@@ -15,6 +15,8 @@ import p4runtime_lib.bmv2
 import p4runtime_lib.helper
 from p4runtime_lib.switch import ShutdownAllSwitchConnections
 
+import cli_helper
+import seed_handler
 
 
 
@@ -45,6 +47,7 @@ def createMulticastGroups(p4info_helper, sw, port_list):
     :param port_list: a list of all ports connecting to hosts
     """
     for i in range(len(port_list)):
+        
         replicas = [
             {'egress_port': p, 'instance': 0}
             for p in port_list if p != port_list[i]
@@ -174,6 +177,69 @@ def writeAllForwardingRules(p4info_helper_sw, p4info_helper_router, sw_list, rou
     writeL3ForwardingRule(p4info_helper_router, sw=r5, type="exact", dst_ip_addr="10.0.2.6",
                           src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:06:66", port=4)
 
+
+def writeValueToRegister(p4info_helper, sw, index, val_name, val):
+    n_chunks = seed_handler.get_n_chunks(len(val)) if isinstance(val, bytes) else 1
+    if n_chunks > 1:
+        chunk_size = seed_handler.CHUNK_SIZE
+        parts = [val[i:i + chunk_size] for i in range(0, len(val), chunk_size)]
+        parts = [seed_handler.seed_to_int(p) for p in parts]
+        msg = "Wrote seed %s to register on %s" % (seed_handler.seed_to_hex(val), sw.name)
+    else:
+        parts = [val]
+        msg = "Wrote value %d to register on %s" % (val, sw.name)
+
+    base_index = index * n_chunks
+    for i in range(n_chunks):
+        cli_helper.register_write(
+            thrift_port=sw.thrift_port,
+            reg_name="MyIngress.%s" % val_name,
+            index=base_index + i,
+            value=parts[i]
+        )
+    print(msg)
+
+
+def readValueFromRegister(p4info_helper, sw, index, val_name, n_chunks=1):
+    base_index = index * n_chunks
+    val_parts = []
+    for i in range(n_chunks):
+        val = cli_helper.register_read(
+            thrift_port=sw.thrift_port,
+            reg_name="MyIngress.%s" % val_name,
+            index=base_index + i)
+        val_parts.append(val)
+
+    if n_chunks > 1:
+        val = b''.join([seed_handler.int_to_seed(v) for v in val_parts])
+        msg = "Read seed %s from register on %s" % (seed_handler.seed_to_hex(val), sw.name)
+    else:
+        val = val_parts[0]
+        msg = "Read value %d from register on %s" % (val, sw.name)
+    print(msg)
+    return val
+
+
+def distributeSeeds(p4info_helper, router_list):
+    r1, r2, r3, r4, r5 = router_list
+    links = [(r1, r2, 0, 0), (r1, r3, 1, 0), (r1, r4, 2, 0), (r2, r5, 1, 0), (r3, r5, 1, 1), (r4, r5, 1, 2)]
+
+    for (src, dst, src_index, dst_index) in links:
+        for i in range(2):
+            seed = seed_handler.generate_seed()
+            #print("Generated seed%d: %s\tfor link %s-%s" % (i+1, seed_handler.seed_to_hex(seed), src.name, dst.name))
+            writeValueToRegister(p4info_helper, src, src_index*2 + i, "curr_seed", seed)
+            writeValueToRegister(p4info_helper, dst, dst_index*2 + i, "curr_seed", seed)
+        writeValueToRegister(p4info_helper, src, src_index, "curr_version", 0)
+        writeValueToRegister(p4info_helper, dst, dst_index, "curr_version", 0)
+        writeValueToRegister(p4info_helper, src, src_index, "ctrl_version", 0)
+        writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", 0)
+
+    for sw in router_list:
+        seed = seed_handler.generate_prng_seed()
+        writeValueToRegister(p4info_helper, sw, 0, "base_prng", seed)
+
+
 def printGrpcError(e):
     print("gRPC Error:", e.details(), end=' ')
     status_code = e.code()
@@ -239,6 +305,7 @@ def main(p4info_files, bmv2_files):
         for r in router_list:
             r.SetForwardingPipelineConfig(p4info=p4info_helper_router.p4info,
                                           bmv2_json_file_path=bmv2_files["router"])
+            r.thrift_port = 9090 + int(r.name[1:]) - 1
             print("Installed P4 Program using SetForwardingPipelineConfig on %s" % r.name)
         for s in sw_list:
             s.SetForwardingPipelineConfig(p4info=p4info_helper_sw.p4info,
@@ -247,6 +314,12 @@ def main(p4info_files, bmv2_files):
 
         # Write forwarding rules
         writeAllForwardingRules(p4info_helper_sw, p4info_helper_router, sw_list, router_list)
+        distributeSeeds(p4info_helper_router, router_list)
+        print("Forwarding rules installed and seeds distributed.")
+        print("Ready to forward packets...")
+
+        while True:
+            sleep(1) # TODO: implement link seeds update
 
     except KeyboardInterrupt:
         print(" Shutting down.")

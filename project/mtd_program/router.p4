@@ -86,6 +86,13 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
+    register<bit<32>>(6*4) prev_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
+    register<bit<32>>(6*4) curr_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
+    register<bit<32>>(6*4) next_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
+    register<bit<32>>(1*8+1) base_prng; // 256 bits = 8x32 bits + 1 bit for the state/counter
+    register<bit<32>>(3)  curr_version; // up to 3 links 
+    register<bit<32>>(3)  ctrl_version; // up to 3 links
+
     action drop() {
         mark_to_drop(standard_metadata);
     }
