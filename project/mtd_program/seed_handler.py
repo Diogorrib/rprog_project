@@ -1,7 +1,7 @@
 import secrets
 
-SEED_SIZE = 128 // 16
-PRNG_SEED_SIZE = 256 // 16
+SEED_SIZE = 128 // 8
+PRNG_SEED_SIZE = 256 // 8
 CHUNK_SIZE = 32 // 8
 
 def generate_seed():
