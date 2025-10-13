@@ -97,8 +97,10 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
-    register<bit<32>>(6*4) prev_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
-    register<bit<32>>(6*4) curr_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
+    // register<bit<32>>(6*4) prev_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
+    register<bit<128>>(6) prev_seed;
+    // register<bit<32>>(6*4) curr_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
+    register<bit<128>>(6) curr_seed;
     register<bit<32>>(6*4) next_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
     register<bit<32>>(1*4+1) base_prng; // 128 bits = 4x32 bits + 1 bit for the state/counter
     register<bit<32>>(3)  curr_version; // up to 3 links
@@ -130,7 +132,7 @@ control MyIngress(inout headers hdr,
         meta.local_version = new_version;
     }
 
-    action update_prev_seed(bit<32> index) {
+    /* action update_prev_seed(bit<32> index) {
         bit<32> aux;
 
         curr_seed.read(aux, index);
@@ -141,9 +143,16 @@ control MyIngress(inout headers hdr,
         prev_seed.write(index+2, aux);
         curr_seed.read(aux, index+3);
         prev_seed.write(index+3, aux);
+    } */
+
+    action update_prev_seed_new(bit<32> index) {
+        bit<128> aux;
+
+        curr_seed.read(aux, index);
+        prev_seed.write(index, aux);
     }
 
-    action update_curr_seed(bit<32> index) {
+    /* action update_curr_seed(bit<32> index) {
         bit<32> aux;
 
         next_seed.read(aux, index);
@@ -154,9 +163,24 @@ control MyIngress(inout headers hdr,
         curr_seed.write(index+2, aux);
         next_seed.read(aux, index+3);
         curr_seed.write(index+3, aux);
+    } */
+
+    action update_curr_seed_new(bit<32> index) {
+        bit<32> aux;
+        bit<128> seed;
+
+        next_seed.read(aux, index);
+        seed = (bit<128>)aux;
+        next_seed.read(aux, index+1);
+        seed = (seed << 32) | (bit<128>)aux;
+        next_seed.read(aux, index+2);
+        seed = (seed << 32) | (bit<128>)aux;
+        next_seed.read(aux, index+3);
+        seed = (seed << 32) | (bit<128>)aux;
+        curr_seed.write(index, seed);
     }
 
-    action get_prev_seed(in bit<32> index, out bit<128> seed) {
+    /* action get_prev_seed(in bit<32> index, out bit<128> seed) {
         bit<32> aux;
 
         prev_seed.read(aux, index);
@@ -167,9 +191,13 @@ control MyIngress(inout headers hdr,
         seed = (seed << 32) | (bit<128>)aux;
         prev_seed.read(aux, index+3);
         seed = (seed << 32) | (bit<128>)aux;
+    } */
+
+    action get_prev_seed_new(in bit<32> index, out bit<128> seed) {
+        prev_seed.read(seed, index);
     }
 
-    action get_curr_seed(in bit<32> index, out bit<128> seed) {
+    /* action get_curr_seed(in bit<32> index, out bit<128> seed) {
         bit<32> aux;
 
         curr_seed.read(aux, index);
@@ -180,6 +208,10 @@ control MyIngress(inout headers hdr,
         seed = (seed << 32) | (bit<128>)aux;
         curr_seed.read(aux, index+3);
         seed = (seed << 32) | (bit<128>)aux;
+    } */
+
+    action get_curr_seed_new(in bit<32> index, out bit<128> seed) {
+        curr_seed.read(seed, index);
     }
 
     action get_next_seed(in bit<32> index, out bit<128> seed) {
@@ -246,7 +278,7 @@ control MyIngress(inout headers hdr,
         if (hdr.custom.isValid()) { // perform deanonymization if custom header is present
             port_index = (bit<32>) standard_metadata.ingress_port - 1;
             check_update_version(port_index, to_update, new_version);
-            if (to_update) {
+            /* if (to_update) {
                 idx = (port_index*2 + 0)*4;
                 update_prev_seed(idx);
                 update_curr_seed(idx);
@@ -271,6 +303,33 @@ control MyIngress(inout headers hdr,
                 get_next_seed(idx, meta.seed1rev);
                 idx = (port_index*2 + 1)*4;
                 get_next_seed(idx, meta.seed2rev);
+            } */
+
+            if (to_update) {
+                idx = port_index*2 + 0;
+                update_prev_seed_new(idx);
+                update_curr_seed_new(idx);
+                idx = port_index*2 + 1;
+                update_prev_seed_new(idx);
+                update_curr_seed_new(idx);
+                update_version(port_index, new_version); // need to be the last operation
+            }
+
+            if (meta.local_version == hdr.custom.version) {
+                idx = port_index*2 + 0;
+                get_curr_seed_new(idx, meta.seed1rev);
+                idx = port_index*2 + 1;
+                get_curr_seed_new(idx, meta.seed2rev);
+            } else if (meta.local_version > hdr.custom.version) {
+                idx = port_index*2 + 0;
+                get_prev_seed_new(idx, meta.seed1rev);
+                idx = port_index*2 + 1;
+                get_prev_seed_new(idx, meta.seed2rev);
+            } else { // meta.local_version < hdr.custom.version
+                idx = (port_index*2 + 0)*4;
+                get_next_seed(idx, meta.seed1rev);
+                idx = (port_index*2 + 1)*4;
+                get_next_seed(idx, meta.seed2rev);
             }
             // TODO: perform deanonymization of the packet here
         }
@@ -290,7 +349,7 @@ control MyIngress(inout headers hdr,
 
             port_index = (bit<32>) standard_metadata.egress_spec - 1;
             check_update_version(port_index, to_update, new_version);
-            if (to_update) {
+            /* if (to_update) {
                 idx = (port_index*2 + 0)*4;
                 update_prev_seed(idx);
                 update_curr_seed(idx);
@@ -302,7 +361,21 @@ control MyIngress(inout headers hdr,
             idx = (port_index*2 + 0)*4;
             get_curr_seed(idx, meta.seed1);
             idx = (port_index*2 + 1)*4;
-            get_curr_seed(idx, meta.seed2);
+            get_curr_seed(idx, meta.seed2); */
+
+            if (to_update) {
+                idx = port_index*2 + 0;
+                update_prev_seed_new(idx);
+                update_curr_seed_new(idx);
+                idx = port_index*2 + 1;
+                update_prev_seed_new(idx);
+                update_curr_seed_new(idx);
+                update_version(port_index, new_version); // need to be the last operation
+            }
+            idx = port_index*2 + 0;
+            get_curr_seed_new(idx, meta.seed1);
+            idx = port_index*2 + 1;
+            get_curr_seed_new(idx, meta.seed2);
             // TODO: perform anonymization of the packet here
         }
     }
