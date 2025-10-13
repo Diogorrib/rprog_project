@@ -1,14 +1,13 @@
 import secrets
 
 SEED_SIZE = 128 // 8
-PRNG_SEED_SIZE = 256 // 8
 CHUNK_SIZE = 32 // 8
 
 def generate_seed():
     return secrets.token_bytes(SEED_SIZE)
 
 def generate_prng_seed():
-    return secrets.token_bytes(PRNG_SEED_SIZE)
+    return secrets.token_bytes(SEED_SIZE)
 
 def seed_to_int(seed):
     return int.from_bytes(seed, byteorder='big')

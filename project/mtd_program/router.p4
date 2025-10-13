@@ -33,13 +33,24 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+header custom_t {
+    bit<32> version;
+    bit<128> tag;
+}
+
 struct metadata {
-    /* empty */
+    bit<32>  local_version;
+    bit<32>  port_index;
+    bit<128> seed1; /* seed for the anonymization */
+    bit<128> seed2; /* seed for the anonymization */
+    bit<128> seed1rev; /* seed for the deanonymization */
+    bit<128> seed2rev; /* seed for the deanonymization */
 }
 
 struct headers {
     ethernet_t   ethernet;
     ipv4_t       ipv4;
+    custom_t     custom;
 }
 
 /*************************************************************************
@@ -89,8 +100,8 @@ control MyIngress(inout headers hdr,
     register<bit<32>>(6*4) prev_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
     register<bit<32>>(6*4) curr_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
     register<bit<32>>(6*4) next_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
-    register<bit<32>>(1*8+1) base_prng; // 256 bits = 8x32 bits + 1 bit for the state/counter
-    register<bit<32>>(3)  curr_version; // up to 3 links 
+    register<bit<32>>(1*4+1) base_prng; // 128 bits = 4x32 bits + 1 bit for the state/counter
+    register<bit<32>>(3)  curr_version; // up to 3 links
     register<bit<32>>(3)  ctrl_version; // up to 3 links
 
     action drop() {
@@ -102,6 +113,86 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.srcAddr = srcAddr;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+    }
+
+    /* Needs to be performed after forwarding action sets the egress port */
+    action check_update_version(in bit<32> port_index, out bool to_update, out bit<32> new_version) {
+        ctrl_version.read(new_version, port_index);
+        curr_version.read(meta.local_version, port_index);
+        if (new_version > meta.local_version)
+            to_update = true;
+        else
+            to_update = false;
+    }
+
+    action update_version(bit<32> port_index, bit<32> new_version) {
+        curr_version.write(port_index, new_version);
+        meta.local_version = new_version;
+    }
+
+    action update_prev_seed(bit<32> index) {
+        bit<32> aux;
+
+        curr_seed.read(aux, index);
+        prev_seed.write(index, aux);
+        curr_seed.read(aux, index+1);
+        prev_seed.write(index+1, aux);
+        curr_seed.read(aux, index+2);
+        prev_seed.write(index+2, aux);
+        curr_seed.read(aux, index+3);
+        prev_seed.write(index+3, aux);
+    }
+
+    action update_curr_seed(bit<32> index) {
+        bit<32> aux;
+
+        next_seed.read(aux, index);
+        curr_seed.write(index, aux);
+        next_seed.read(aux, index+1);
+        curr_seed.write(index+1, aux);
+        next_seed.read(aux, index+2);
+        curr_seed.write(index+2, aux);
+        next_seed.read(aux, index+3);
+        curr_seed.write(index+3, aux);
+    }
+
+    action get_prev_seed(in bit<32> index, out bit<128> seed) {
+        bit<32> aux;
+
+        prev_seed.read(aux, index);
+        seed = (bit<128>)aux;
+        prev_seed.read(aux, index+1);
+        seed = (seed << 32) | (bit<128>)aux;
+        prev_seed.read(aux, index+2);
+        seed = (seed << 32) | (bit<128>)aux;
+        prev_seed.read(aux, index+3);
+        seed = (seed << 32) | (bit<128>)aux;
+    }
+
+    action get_curr_seed(in bit<32> index, out bit<128> seed) {
+        bit<32> aux;
+
+        curr_seed.read(aux, index);
+        seed = (bit<128>)aux;
+        curr_seed.read(aux, index+1);
+        seed = (seed << 32) | (bit<128>)aux;
+        curr_seed.read(aux, index+2);
+        seed = (seed << 32) | (bit<128>)aux;
+        curr_seed.read(aux, index+3);
+        seed = (seed << 32) | (bit<128>)aux;
+    }
+
+    action get_next_seed(in bit<32> index, out bit<128> seed) {
+        bit<32> aux;
+
+        next_seed.read(aux, index);
+        seed = (bit<128>)aux;
+        next_seed.read(aux, index+1);
+        seed = (seed << 32) | (bit<128>)aux;
+        next_seed.read(aux, index+2);
+        seed = (seed << 32) | (bit<128>)aux;
+        next_seed.read(aux, index+3);
+        seed = (seed << 32) | (bit<128>)aux;
     }
 
     table ipv4_exact {
@@ -145,17 +236,74 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
-        if (hdr.ipv4.isValid()) {
+        bit<32> port_index;
+        bit<32> idx;
+        bit<32> new_version;
+        bool to_update;
+
+        // TODO: check if further parsing is required (consider resubmit or recirculate)
+
+        if (hdr.custom.isValid()) { // perform deanonymization if custom header is present
+            port_index = (bit<32>) standard_metadata.ingress_port - 1;
+            check_update_version(port_index, to_update, new_version);
+            if (to_update) {
+                idx = (port_index*2 + 0)*4;
+                update_prev_seed(idx);
+                update_curr_seed(idx);
+                idx = (port_index*2 + 1)*4;
+                update_prev_seed(idx);
+                update_curr_seed(idx);
+                update_version(port_index, new_version); // need to be the last operation
+            }
+
+            if (meta.local_version == hdr.custom.version) {
+                idx = (port_index*2 + 0)*4;
+                get_curr_seed(idx, meta.seed1rev);
+                idx = (port_index*2 + 1)*4;
+                get_curr_seed(idx, meta.seed2rev);
+            } else if (meta.local_version > hdr.custom.version) {
+                idx = (port_index*2 + 0)*4;
+                get_prev_seed(idx, meta.seed1rev);
+                idx = (port_index*2 + 1)*4;
+                get_prev_seed(idx, meta.seed2rev);
+            } else { // meta.local_version < hdr.custom.version
+                idx = (port_index*2 + 0)*4;
+                get_next_seed(idx, meta.seed1rev);
+                idx = (port_index*2 + 1)*4;
+                get_next_seed(idx, meta.seed2rev);
+            }
+            // TODO: perform deanonymization of the packet here
+        }
+
+        if (hdr.ipv4.isValid()) { // perform routing and anonymization of the recovered packet
             if (hdr.ipv4.ttl <= 1) {
                 drop();
                 return;
             }
 
-            if (ipv4_exact.apply().hit)
+            if (!(ipv4_exact.apply().hit ||
+                  ipv4_lpm.apply().hit ||
+                  ipv4_reverse.apply().hit)) {
+                drop();
                 return;
-            if (ipv4_lpm.apply().hit)
-                return;
-            ipv4_reverse.apply();
+            }
+
+            port_index = (bit<32>) standard_metadata.egress_spec - 1;
+            check_update_version(port_index, to_update, new_version);
+            if (to_update) {
+                idx = (port_index*2 + 0)*4;
+                update_prev_seed(idx);
+                update_curr_seed(idx);
+                idx = (port_index*2 + 1)*4;
+                update_prev_seed(idx);
+                update_curr_seed(idx);
+                update_version(port_index, new_version); // need to be the last operation
+            }
+            idx = (port_index*2 + 0)*4;
+            get_curr_seed(idx, meta.seed1);
+            idx = (port_index*2 + 1)*4;
+            get_curr_seed(idx, meta.seed2);
+            // TODO: perform anonymization of the packet here
         }
     }
 }

@@ -2,7 +2,7 @@
 import argparse
 import os
 import sys
-from time import sleep
+import time
 
 import grpc
 
@@ -17,8 +17,12 @@ from p4runtime_lib.switch import ShutdownAllSwitchConnections
 
 import cli_helper
 import seed_handler
+import random
 
-
+global_links = []   # list of tuples (src_sw, dst_sw, src_index, dst_index)
+update_times = []   # time intervals for each link to update seeds
+update_state = []   # last update time for each link
+update_pending = [] # pending second phase of the update
 
 def writeL2ForwardingRule(p4info_helper, sw, dst_eth_addr, port):
     """
@@ -125,41 +129,41 @@ def writeAllForwardingRules(p4info_helper_sw, p4info_helper_router, sw_list, rou
     createMulticastGroups(p4info_helper_sw, sw=s1, port_list=[1, 2, 3])
 
     # Write forwarding rules for s2
-    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:04:44", port=2)
-    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:05:55", port=3)
-    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:06:66", port=4)
-    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:bb:bb", port=1)
-    createMulticastGroups(p4info_helper_sw, sw=s2, port_list=[2, 3, 4])
+    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:04:44", port=1)
+    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:05:55", port=2)
+    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:06:66", port=3)
+    writeL2ForwardingRule(p4info_helper_sw, sw=s2, dst_eth_addr="08:00:00:00:bb:bb", port=4)
+    createMulticastGroups(p4info_helper_sw, sw=s2, port_list=[1, 2, 3])
 
     # Write forwarding rules for r1
-    writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.1",
-                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:01:11", port=1)
-    writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.2",
-                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:02:22", port=1)
-    writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.3",
-                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:03:33", port=1)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.2.4",
-                          src_eth_addr="08:00:00:00:aa:22", dst_eth_addr="08:00:00:00:22:11", port=2)
+                          src_eth_addr="08:00:00:00:aa:11", dst_eth_addr="08:00:00:00:22:11", port=1)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.2.5",
-                          src_eth_addr="08:00:00:00:aa:33", dst_eth_addr="08:00:00:00:33:11", port=3)
+                          src_eth_addr="08:00:00:00:aa:22", dst_eth_addr="08:00:00:00:33:11", port=2)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.2.6",
-                          src_eth_addr="08:00:00:00:aa:44", dst_eth_addr="08:00:00:00:44:11", port=4)
+                          src_eth_addr="08:00:00:00:aa:33", dst_eth_addr="08:00:00:00:44:11", port=3)
+    writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.1",
+                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:01:11", port=4)
+    writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.2",
+                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:02:22", port=4)
+    writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.3",
+                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:03:33", port=4)
 
     #Write forwarding rules for r2
     writeL3ForwardingRule(p4info_helper_router, sw=r2, type="lpm", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:22:11", dst_eth_addr="08:00:00:00:aa:22", port=1)
+                          src_eth_addr="08:00:00:00:22:11", dst_eth_addr="08:00:00:00:aa:11", port=1)
     writeL3ForwardingRule(p4info_helper_router, sw=r2, type="lpm", dst_ip_addr=("10.0.2.0", 24),
                           src_eth_addr="08:00:00:00:22:22", dst_eth_addr="08:00:00:00:bb:11", port=2)
 
     #Write forwarding rules for r3
     writeL3ForwardingRule(p4info_helper_router, sw=r3, type="lpm", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:33:11", dst_eth_addr="08:00:00:00:aa:33", port=1)
+                          src_eth_addr="08:00:00:00:33:11", dst_eth_addr="08:00:00:00:aa:22", port=1)
     writeL3ForwardingRule(p4info_helper_router, sw=r3, type="lpm", dst_ip_addr=("10.0.2.0", 24),
                           src_eth_addr="08:00:00:00:33:22", dst_eth_addr="08:00:00:00:bb:22", port=2)
 
     #Write forwarding rules for r4
     writeL3ForwardingRule(p4info_helper_router, sw=r4, type="lpm", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:44:11", dst_eth_addr="08:00:00:00:aa:44", port=1)
+                          src_eth_addr="08:00:00:00:44:11", dst_eth_addr="08:00:00:00:aa:33", port=1)
     writeL3ForwardingRule(p4info_helper_router, sw=r4, type="lpm", dst_ip_addr=("10.0.2.0", 24),
                           src_eth_addr="08:00:00:00:44:22", dst_eth_addr="08:00:00:00:bb:33", port=2)
 
@@ -197,7 +201,7 @@ def writeValueToRegister(p4info_helper, sw, index, val_name, val):
             index=base_index + i,
             value=parts[i]
         )
-    print(msg)
+    #print(msg)
 
 
 def readValueFromRegister(p4info_helper, sw, index, val_name, n_chunks=1):
@@ -216,15 +220,52 @@ def readValueFromRegister(p4info_helper, sw, index, val_name, n_chunks=1):
     else:
         val = val_parts[0]
         msg = "Read value %d from register on %s" % (val, sw.name)
-    print(msg)
+    #print(msg)
     return val
 
+def compareVersions(p4info_helper, sw, index):
+    """Compare the control and current versions to verify if the last update was already applied.
+    :return: True if update was performed, False otherwise"""
+    ctrl_version = readValueFromRegister(p4info_helper, sw, index, "ctrl_version")
+    curr_version = readValueFromRegister(p4info_helper, sw, index, "curr_version")
+    return ctrl_version <= curr_version
+
+def extendTimeIfNoUpdate(p4info_helper, link, index, curr_time):
+    """If the last update was not yet applied, extend the time to allow seeds to be useful."""
+    src, dst, src_index, dst_index = link
+    if not compareVersions(p4info_helper, src, src_index) or not compareVersions(p4info_helper, dst, dst_index):
+        update_state[index] = curr_time
+        print("Previous update not yet applied on link %d, extending time..." % index)
+        return True
+    return False
+
+def updateLinkSeeds(p4info_helper, link, index, curr_time):
+    src, dst, src_index, dst_index = link
+    for i in range(2):
+        seed = seed_handler.generate_seed()
+        writeValueToRegister(p4info_helper, src, src_index*2 + i, "next_seed", seed)
+        writeValueToRegister(p4info_helper, dst, dst_index*2 + i, "next_seed", seed)
+    update_times[index] = random.randint(25, 35)
+    update_state[index] = curr_time
+    update_pending[index] = True
+
+def secondPhaseUpdate(p4info_helper, link, index):
+    src, dst, src_index, dst_index = link
+    curr_version = readValueFromRegister(p4info_helper, src, src_index, "curr_version")
+    writeValueToRegister(p4info_helper, src, src_index, "ctrl_version", curr_version + 1)
+    writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", curr_version + 1)
+    update_pending[index] = False
 
 def distributeSeeds(p4info_helper, router_list):
     r1, r2, r3, r4, r5 = router_list
-    links = [(r1, r2, 0, 0), (r1, r3, 1, 0), (r1, r4, 2, 0), (r2, r5, 1, 0), (r3, r5, 1, 1), (r4, r5, 1, 2)]
+    global_links.append((r1, r2, 0, 0))
+    global_links.append((r1, r3, 1, 0))
+    global_links.append((r1, r4, 2, 0))
+    global_links.append((r2, r5, 1, 0))
+    global_links.append((r3, r5, 1, 1))
+    global_links.append((r4, r5, 1, 2))
 
-    for (src, dst, src_index, dst_index) in links:
+    for (src, dst, src_index, dst_index) in global_links:
         for i in range(2):
             seed = seed_handler.generate_seed()
             #print("Generated seed%d: %s\tfor link %s-%s" % (i+1, seed_handler.seed_to_hex(seed), src.name, dst.name))
@@ -236,8 +277,25 @@ def distributeSeeds(p4info_helper, router_list):
         writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", 0)
 
     for sw in router_list:
-        seed = seed_handler.generate_prng_seed()
+        seed = seed_handler.generate_seed()
         writeValueToRegister(p4info_helper, sw, 0, "base_prng", seed)
+    for _ in range(len(global_links)):
+        update_times.append(random.randint(25, 35))
+        update_state.append(0)
+        update_pending.append(False)
+
+
+def updateSeeds(p4info_helper, curr_time):
+    for i in range(len(global_links)):
+        last_update = update_state[i]
+        if curr_time - last_update >= update_times[i]:
+            if extendTimeIfNoUpdate(p4info_helper, global_links[i], i, curr_time):
+                continue
+            updateLinkSeeds(p4info_helper, global_links[i], i, curr_time)
+            print("First phase of update done for link %d" % i)
+        elif update_pending[i]:
+            secondPhaseUpdate(p4info_helper, global_links[i], i)
+            print("Second phase of update done for link %d" % i)
 
 
 def printGrpcError(e):
@@ -314,12 +372,16 @@ def main(p4info_files, bmv2_files):
 
         # Write forwarding rules
         writeAllForwardingRules(p4info_helper_sw, p4info_helper_router, sw_list, router_list)
+        print("Forwarding rules installed.")
         distributeSeeds(p4info_helper_router, router_list)
-        print("Forwarding rules installed and seeds distributed.")
+        print("Initial seeds distributed.")
         print("Ready to forward packets...")
+        start_time = int(time.time())
 
-        while True:
-            sleep(1) # TODO: implement link seeds update
+        while True: # p4runtime checks for updates every second
+            time.sleep(1)
+            curr_time = int(time.time()) - start_time
+            updateSeeds(p4info_helper_router, curr_time)
 
     except KeyboardInterrupt:
         print(" Shutting down.")
