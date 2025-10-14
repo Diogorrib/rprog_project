@@ -65,7 +65,8 @@ def createMulticastGroups(p4info_helper, sw, port_list):
 
 
 def writeL3ForwardingRule(p4info_helper, sw, type, dst_ip_addr,
-                          dst_eth_addr, src_eth_addr, port):
+                          dst_eth_addr, src_eth_addr, port,
+                          perform_randomization):
     """
     :param p4info_helper: the P4Info helper
     :param sw: the switch connection
@@ -82,6 +83,7 @@ def writeL3ForwardingRule(p4info_helper, sw, type, dst_ip_addr,
         },
         action_name="MyIngress.ipv4_forward",
         action_params={
+            "perform_rnd": 1 if perform_randomization else 0,
             "srcAddr": src_eth_addr,
             "dstAddr": dst_eth_addr,
             "port": port
@@ -91,7 +93,8 @@ def writeL3ForwardingRule(p4info_helper, sw, type, dst_ip_addr,
 
 
 def writeL3ReversePathRule(p4info_helper, sw, dst_ip_addr, src_ip_addr,
-                           dst_eth_addr, src_eth_addr, port):
+                           dst_eth_addr, src_eth_addr, port,
+                           perform_randomization):
     """
     :param p4info_helper: the P4Info helper
     :param sw: the switch connection
@@ -109,6 +112,7 @@ def writeL3ReversePathRule(p4info_helper, sw, dst_ip_addr, src_ip_addr,
         },
         action_name="MyIngress.ipv4_forward",
         action_params={
+            "perform_rnd": 1 if perform_randomization else 0,
             "srcAddr": src_eth_addr,
             "dstAddr": dst_eth_addr,
             "port": port
@@ -137,49 +141,67 @@ def writeAllForwardingRules(p4info_helper_sw, p4info_helper_router, sw_list, rou
 
     # Write forwarding rules for r1
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.2.4",
-                          src_eth_addr="08:00:00:00:aa:11", dst_eth_addr="08:00:00:00:22:11", port=1)
+                          src_eth_addr="08:00:00:00:aa:11", dst_eth_addr="08:00:00:00:22:11",
+                          port=1, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.2.5",
-                          src_eth_addr="08:00:00:00:aa:22", dst_eth_addr="08:00:00:00:33:11", port=2)
+                          src_eth_addr="08:00:00:00:aa:22", dst_eth_addr="08:00:00:00:33:11",
+                          port=2, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.2.6",
-                          src_eth_addr="08:00:00:00:aa:33", dst_eth_addr="08:00:00:00:44:11", port=3)
+                          src_eth_addr="08:00:00:00:aa:33", dst_eth_addr="08:00:00:00:44:11",
+                          port=3, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.1",
-                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:01:11", port=4)
+                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:01:11",
+                          port=4, perform_randomization=False)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.2",
-                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:02:22", port=4)
+                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:02:22",
+                          port=4, perform_randomization=False)
     writeL3ForwardingRule(p4info_helper_router, sw=r1, type="exact", dst_ip_addr="10.0.1.3",
-                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:03:33", port=4)
+                          src_eth_addr="08:00:00:00:aa:aa", dst_eth_addr="08:00:00:00:03:33",
+                          port=4, perform_randomization=False)
 
     #Write forwarding rules for r2
     writeL3ForwardingRule(p4info_helper_router, sw=r2, type="lpm", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:22:11", dst_eth_addr="08:00:00:00:aa:11", port=1)
+                          src_eth_addr="08:00:00:00:22:11", dst_eth_addr="08:00:00:00:aa:11",
+                          port=1, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r2, type="lpm", dst_ip_addr=("10.0.2.0", 24),
-                          src_eth_addr="08:00:00:00:22:22", dst_eth_addr="08:00:00:00:bb:11", port=2)
+                          src_eth_addr="08:00:00:00:22:22", dst_eth_addr="08:00:00:00:bb:11",
+                          port=2, perform_randomization=True)
 
     #Write forwarding rules for r3
     writeL3ForwardingRule(p4info_helper_router, sw=r3, type="lpm", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:33:11", dst_eth_addr="08:00:00:00:aa:22", port=1)
+                          src_eth_addr="08:00:00:00:33:11", dst_eth_addr="08:00:00:00:aa:22",
+                          port=1, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r3, type="lpm", dst_ip_addr=("10.0.2.0", 24),
-                          src_eth_addr="08:00:00:00:33:22", dst_eth_addr="08:00:00:00:bb:22", port=2)
+                          src_eth_addr="08:00:00:00:33:22", dst_eth_addr="08:00:00:00:bb:22",
+                          port=2, perform_randomization=True)
 
     #Write forwarding rules for r4
     writeL3ForwardingRule(p4info_helper_router, sw=r4, type="lpm", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:44:11", dst_eth_addr="08:00:00:00:aa:33", port=1)
+                          src_eth_addr="08:00:00:00:44:11", dst_eth_addr="08:00:00:00:aa:33",
+                          port=1, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r4, type="lpm", dst_ip_addr=("10.0.2.0", 24),
-                          src_eth_addr="08:00:00:00:44:22", dst_eth_addr="08:00:00:00:bb:33", port=2)
+                          src_eth_addr="08:00:00:00:44:22", dst_eth_addr="08:00:00:00:bb:33",
+                          port=2, perform_randomization=True)
 
     # Write forwarding rules for r5 (note: reverse paths defined in r1 considering the 10.0.2.x IPs)
     writeL3ReversePathRule(p4info_helper_router, sw=r5, src_ip_addr="10.0.2.4", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:bb:11", dst_eth_addr="08:00:00:00:22:22", port=1)
+                          src_eth_addr="08:00:00:00:bb:11", dst_eth_addr="08:00:00:00:22:22",
+                          port=1, perform_randomization=True)
     writeL3ReversePathRule(p4info_helper_router, sw=r5, src_ip_addr="10.0.2.5", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:bb:22", dst_eth_addr="08:00:00:00:33:22", port=2)
+                          src_eth_addr="08:00:00:00:bb:22", dst_eth_addr="08:00:00:00:33:22",
+                          port=2, perform_randomization=True)
     writeL3ReversePathRule(p4info_helper_router, sw=r5, src_ip_addr="10.0.2.6", dst_ip_addr=("10.0.1.0", 24),
-                          src_eth_addr="08:00:00:00:bb:33", dst_eth_addr="08:00:00:00:44:22", port=3)
+                          src_eth_addr="08:00:00:00:bb:33", dst_eth_addr="08:00:00:00:44:22",
+                          port=3, perform_randomization=True)
     writeL3ForwardingRule(p4info_helper_router, sw=r5, type="exact", dst_ip_addr="10.0.2.4",
-                          src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:04:44", port=4)
+                          src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:04:44",
+                          port=4, perform_randomization=False)
     writeL3ForwardingRule(p4info_helper_router, sw=r5, type="exact", dst_ip_addr="10.0.2.5",
-                          src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:05:55", port=4)
+                          src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:05:55",
+                          port=4, perform_randomization=False)
     writeL3ForwardingRule(p4info_helper_router, sw=r5, type="exact", dst_ip_addr="10.0.2.6",
-                          src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:06:66", port=4)
+                          src_eth_addr="08:00:00:00:bb:bb", dst_eth_addr="08:00:00:00:06:66",
+                          port=4, perform_randomization=False)
 
 
 def writeValueToRegister(p4info_helper, sw, index, val_name, val):
@@ -386,8 +408,8 @@ def main(p4info_files, bmv2_files):
         print("Ready to forward packets...")
         start_time = int(time.time())
 
-        while True: # p4runtime checks for updates every 3 seconds
-            time.sleep(3)
+        while True: # p4runtime checks for updates every second
+            time.sleep(1)
             curr_time = int(time.time()) - start_time
             updateSeeds(p4info_helper_router, curr_time)
 
