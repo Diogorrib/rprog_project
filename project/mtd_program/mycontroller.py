@@ -266,7 +266,7 @@ def distributeSeeds(p4info_helper, router_list):
     global_links.append((r4, r5, 1, 2))
 
     for (src, dst, src_index, dst_index) in global_links:
-        for i in range(2):
+        """ for i in range(2):
             seed = seed_handler.generate_seed()
             #print("Generated seed%d: %s\tfor link %s-%s" % (i+1, seed_handler.seed_to_hex(seed), src.name, dst.name))
             writeValueToRegister(p4info_helper, src, src_index*2 + i, "curr_seed", seed)
@@ -274,7 +274,15 @@ def distributeSeeds(p4info_helper, router_list):
         writeValueToRegister(p4info_helper, src, src_index, "curr_version", 0)
         writeValueToRegister(p4info_helper, dst, dst_index, "curr_version", 0)
         writeValueToRegister(p4info_helper, src, src_index, "ctrl_version", 0)
-        writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", 0)
+        writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", 0) """
+        for i in range(2):
+            seed = seed_handler.generate_seed()
+            writeValueToRegister(p4info_helper, src, src_index*2 + i, "next_seed", seed)
+            writeValueToRegister(p4info_helper, dst, dst_index*2 + i, "next_seed", seed)
+        writeValueToRegister(p4info_helper, src, src_index, "curr_version", 0)
+        writeValueToRegister(p4info_helper, dst, dst_index, "curr_version", 0)
+        writeValueToRegister(p4info_helper, src, src_index, "ctrl_version", 1)
+        writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", 1)
 
     for sw in router_list:
         seed = seed_handler.generate_seed()
@@ -378,8 +386,8 @@ def main(p4info_files, bmv2_files):
         print("Ready to forward packets...")
         start_time = int(time.time())
 
-        while True: # p4runtime checks for updates every second
-            time.sleep(1)
+        while True: # p4runtime checks for updates every 3 seconds
+            time.sleep(3)
             curr_time = int(time.time()) - start_time
             updateSeeds(p4info_helper_router, curr_time)
 
