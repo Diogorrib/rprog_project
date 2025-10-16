@@ -1,6 +1,7 @@
 /* -*- P4_16 -*- */
 #include <core.p4>
 #include <v1model.p4>
+#include "siphash.p4"
 
 const bit<16> TYPE_IPV4 =   0x0800;
 const bit<16> TYPE_CUSTOM = 0x88B5;
@@ -282,11 +283,15 @@ control MyIngress(inout headers hdr,
         nonce = (nonce << 32) | (bit<128>)aux;
         base_prng.read(aux, 3);
         nonce = (nonce << 32) | (bit<128>)aux;
+        base_prng.read(aux, 4);
+        aux = aux + 1;
+        siphash_2_4(nonce, aux, nonce);
+        base_prng.write(4, aux);
     }
 
-    action randomize_header(bit<128> enc_seed) {
-        
-    }
+    /* action randomize_header(bit<128> enc_seed) {
+        // TODO
+    } */
 
     table ipv4_exact {
         key = {
@@ -365,6 +370,8 @@ control MyIngress(inout headers hdr,
         // derandomize the packet: if second processing
         if (meta.is_recirculated) {
             // TODO: derandomize the packet here using meta.nonce and meta.seed2
+            hdr.ethernet.etherType = hdr.custom.etherType;
+            hdr.custom.setInvalid();
         }
 
         // perform forwarding actions
@@ -400,7 +407,8 @@ control MyIngress(inout headers hdr,
             get_new_nonce(meta.nonce);
 
             enc_seed = meta.seed2 ^ meta.nonce;
-            randomize_header(enc_seed);
+            // randomize_header(enc_seed);
+            hdr.ethernet.etherType = hdr.ethernet.etherType ^ enc_seed[15:0];
 
             hdr.custom.setValid();
             hdr.custom.version = meta.local_version;

@@ -6,9 +6,6 @@ CHUNK_SIZE = 32 // 8
 def generate_seed():
     return secrets.token_bytes(SEED_SIZE)
 
-def generate_prng_seed():
-    return secrets.token_bytes(SEED_SIZE)
-
 def seed_to_int(seed):
     return int.from_bytes(seed, byteorder='big')
 
