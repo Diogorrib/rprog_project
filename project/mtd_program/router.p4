@@ -271,6 +271,23 @@ control MyIngress(inout headers hdr,
         curr_seed.read(seed, i);
     }
 
+    action get_new_nonce(out bit<128> nonce) {
+        bit<32>  aux;
+
+        base_prng.read(aux, 0);
+        nonce = (bit<128>)aux;
+        base_prng.read(aux, 1);
+        nonce = (nonce << 32) | (bit<128>)aux;
+        base_prng.read(aux, 2);
+        nonce = (nonce << 32) | (bit<128>)aux;
+        base_prng.read(aux, 3);
+        nonce = (nonce << 32) | (bit<128>)aux;
+    }
+
+    action randomize_header(bit<128> enc_seed) {
+        
+    }
+
     table ipv4_exact {
         key = {
             hdr.ipv4.dstAddr: exact;
@@ -312,6 +329,7 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
+        bit<128> enc_seed;
         bit<32> port_index;
         bit<32> new_version;
         bool to_update;
@@ -379,10 +397,18 @@ control MyIngress(inout headers hdr,
             }
             get_curr_seed(port_index, 0, meta.seed1);
             get_curr_seed(port_index, 1, meta.seed2);
-            // TODO: randomize the packet here generating a nonce and
-            //       then using (seed2 XOR nonce) to randomize the header fields
-            //       also, need to add the custom header with version,
-            //       original etherType, and tag (= nonce XOR seed1)
+            get_new_nonce(meta.nonce);
+
+            enc_seed = meta.seed2 ^ meta.nonce;
+            randomize_header(enc_seed);
+
+            hdr.custom.setValid();
+            hdr.custom.version = meta.local_version;
+            hdr.custom.tag = meta.seed1 ^ meta.nonce;
+            hdr.custom.etherType = hdr.ethernet.etherType;
+            hdr.ethernet.etherType = TYPE_CUSTOM;
+        } else {
+            hdr.custom.setInvalid();
         }
     }
 }
@@ -428,7 +454,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        // TODO: emit custom when to be randomized
+        packet.emit(hdr.custom);
         packet.emit(hdr.ipv4);
         packet.emit(hdr.icmp);
         packet.emit(hdr.udp);
