@@ -2,11 +2,11 @@ from binascii import unhexlify
 
 """
 Helper file to understand the packet structure from raw data.
+Only works correctly for packets that contain the real etherType and protocol fields.
 Insert the input packet hex string/stream below.
 """
 
-input_packet = "0x08000000221108000000aa1188b5bcca46f167a50f70c8c517f8291538e500000001080045000054c2a340003f0162010a0001010a0002040800d34b56370001fd14f168000000001a2b070000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637"
-packet_type = None # specify if packet is randomized
+input_packet = "08000000221108000000aa1188b50000eeffaabbccddeeffaabbccddeeffaabbccdd0800450000549f5540003f01854f0a0001010a0002040800819d91d70001745cf26800000000b6f1080000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637"
 
 hexstr = input_packet[2:] if input_packet.startswith("0x") else input_packet
 data = unhexlify(hexstr)
@@ -118,28 +118,17 @@ def parse_tcp(packet, offset):
 
 
 offset = 0
-type = 'ethernet'
-
 while True:
     if type == 'ethernet':
         eth_hdr, offset = parse_ethernet(data, offset)
         print("Ethernet Header:", eth_hdr)
-        if packet_type is not None:
-            type = packet_type
-            continue
         type = 'custom_t' if eth_hdr["ethertype"] == "0x88b5" else 'ipv4'
     elif type == 'custom_t':
         custom_hdr, offset = parse_custom_t(data, offset)
         print("Custom Header:", custom_hdr)
-        if packet_type is not None:
-            type = packet_type
-            continue
         type = 'ipv4' if custom_hdr["etherType"] == "0x0800" else ''
     elif type == 'ipv4':
         ipv4_hdr, offset = parse_ipv4_fixed(data, offset)
-        if packet_type is not None:
-            type = packet_type
-            continue
         print("IPv4 Header:", ipv4_hdr)
         match ipv4_hdr["protocol"]:
             case 1:

@@ -2,12 +2,13 @@
 #include <core.p4>
 #include <v1model.p4>
 
+#define FIELD_LIST_ID 1
+
 const bit<16> TYPE_IPV4 =   0x0800;
 const bit<16> TYPE_CUSTOM = 0x88B5;
 const bit<8>  PROTO_ICMP = 1;
 const bit<8>  PROTO_TCP  = 6;
 const bit<8>  PROTO_UDP  = 17;
-const bit<32> PKT_INSTANCE_TYPE_RESUBMIT = 1;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -72,13 +73,22 @@ header tcp_t {
 }
 
 struct metadata {
-    bool    perform_rnd; // whether to perform randomization or not
-    bool    is_recirculated; // indicates second processing of the packet
-    bool    fetched_version;
-    @field_list(1) bit<32>  local_version;
-    @field_list(1) bit<128> seed1; // seed to XOR with the nonce
-    @field_list(1) bit<128> seed2; // seed to XOR with the nonce and then use to randomize the header fields
-    @field_list(1) bit<128> nonce;
+    @field_list(FIELD_LIST_ID)
+    bool     is_second_parse;
+
+    @field_list(FIELD_LIST_ID)
+    bit<32>  local_version;
+
+    @field_list(FIELD_LIST_ID)
+    bit<128> seed1; // seed to XOR with the nonce
+
+    @field_list(FIELD_LIST_ID)
+    bit<128> seed2; // seed to XOR with the nonce and then use to randomize the header fields
+
+    @field_list(FIELD_LIST_ID)
+    bit<128> nonce;
+
+    bool     perform_rnd;
 }
 
 struct headers {
@@ -100,7 +110,6 @@ parser MyParser(packet_in packet,
                 inout standard_metadata_t standard_metadata) {
 
     state start {
-        meta.is_recirculated = (standard_metadata.instance_type == PKT_INSTANCE_TYPE_RESUBMIT);
         transition parse_ethernet;
     }
 
@@ -138,26 +147,37 @@ parser MyParser(packet_in packet,
         transition accept;
     }
 
+    /* As this implementation goal is to randomize fields in the headers,
+       including the protocols in use, so it makes it more difficult for
+       malicious actors to identify them (and thus launch attacks),
+       we need to extract local secret information to recover the original
+       etherType and protocol information. However, this implies reading
+       from registers, operation that is not supported in the parser for
+       the target we are using.
+       To work around this limitation, we perform a first parse of the
+       headers that are always present (ethernet and custom), then the
+       custom.tag enables the derivation of the original enc_seed, from
+       a local secret stored in registers.
+       Then a second parse is triggered through a resubmit, where the
+       original etherType and protocol fields can be recovered and the
+       remaining headers parsed accordingly.
+       In summary we require the following steps:
+       -> first_parse
+           -> first_processing (extract secrets, derive seeds and save in metadata)
+               -> second_parse (use metadata to recover original fields)
+                   -> second_processing and then deparsing as usual
+    */
     state parse_custom {
         packet.extract(hdr.custom);
-        transition select(meta.is_recirculated) {
+        transition select(meta.is_second_parse) {
             true: second_start;
             false: accept;
         }
     }
 
-    // TODO: we need to be able to deteministically obtain protocol type
-    //       from each header (starting from custom) from the randomization
-    //       process, so we can parse the correct headers and then derandomize
-    //       them in the ingress processing. (e.g., reserve a derivation of
-    //       the original enc_seed to encode all protocols)
-    //
-    // Note: for now, it is only required to obtain the etherType from
-    //       the custom header (i.e. 16 bits) and the protocol from
-    //       the IPv4 header (i.e. 8 bits)
-
     state second_start {
-        transition select(hdr.custom.etherType) { // FIXME: requires derandomization
+        hdr.ethernet.etherType = hdr.custom.etherType;
+        transition select(hdr.ethernet.etherType) { // FIXME: requires derandomization
             TYPE_IPV4: parse_ipv4; // FIXME: requires different function or generalization of the current one
             default: accept;
         }
@@ -181,10 +201,13 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
-    // register<bit<32>>(6*4) prev_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
-    register<bit<128>>(6) prev_seed;
-    // register<bit<32>>(6*4) curr_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
-    register<bit<128>>(6) curr_seed;
+    /* We split 32-bit registers to store 128-bit values to allow use from CLI,
+       as we explain p4runtime does not implement this operation yet, so CLI is the workaround.
+       However, CLI can only convert up to 64-bit unsigned values, so 32-bit was the highest
+       power of 2 we could use.
+       128-bit registers that did not require runtime intervention were not split. */
+    register<bit<128>>(6) prev_seed; // up to 3 links each with a seed-pair (128 bits)
+    register<bit<128>>(6) curr_seed; // up to 3 links each with a seed-pair (128 bits)
     register<bit<32>>(6*4) next_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
     register<bit<32>>(1*4+1) base_prng; // 128 bits = 4x32 bits + 1 bit for the state/counter
     register<bit<32>>(3)  curr_version; // up to 3 links
@@ -210,7 +233,7 @@ control MyIngress(inout headers hdr,
                                     out bool to_update) {
         to_update = false;
         curr_version.read(meta.local_version, in_port_idx);
-        meta.fetched_version = true;
+        // meta.fetched_version = true;
         if (meta.local_version < packet_version) {
             to_update = true;
         }
@@ -282,10 +305,10 @@ control MyIngress(inout headers hdr,
         nonce = (nonce << 32) | (bit<128>)aux;
         base_prng.read(aux, 3);
         nonce = (nonce << 32) | (bit<128>)aux;
-    }
-
-    action randomize_header(bit<128> enc_seed) {
-        
+        base_prng.read(aux, 4);
+        aux = aux + 1;
+        base_prng.write(4, aux);
+        nonce = nonce ^ (bit<128>)aux; // FIXME: use a better PRNG
     }
 
     table ipv4_exact {
@@ -329,45 +352,19 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
-        bit<128> enc_seed;
-        bit<32> port_index;
-        bit<32> new_version;
-        bool to_update;
 
-        // required initializations across recirculations
-        meta.fetched_version = false;
-
-        // fetch version and nonce from packet: if first processing
-        if (!meta.is_recirculated && hdr.custom.isValid()) {
-            port_index = (bit<32>) standard_metadata.ingress_port - 1;
-            check_update_from_packet(port_index, hdr.custom.version, to_update);
-            if (to_update) {
-                update_prev_seed(port_index, 0);
-                update_prev_seed(port_index, 1);
-                update_curr_seed(port_index, 0);
-                update_curr_seed(port_index, 1);
-                update_version(port_index, hdr.custom.version); // need to be the last operation
+        if (hdr.custom.isValid()) {
+            // We require this resubmit as we explain above in the parser
+            if (!meta.is_second_parse) {
+                meta.is_second_parse = true;
+                resubmit_preserving_field_list(FIELD_LIST_ID);
+                return;
+            } else {
+                hdr.ethernet.etherType = hdr.custom.etherType;
+                hdr.custom.setInvalid();
             }
-
-            // here it can never be lower since we perform the update above
-            if (meta.local_version == hdr.custom.version) {
-                get_curr_seed(port_index, 0, meta.seed1);
-                get_curr_seed(port_index, 1, meta.seed2);
-            } else { // meta.local_version > hdr.custom.version
-                get_prev_seed(port_index, 0, meta.seed1);
-                get_prev_seed(port_index, 1, meta.seed2);
-            }
-            // TODO: extract nonce from tag and save in metadata
-            resubmit_preserving_field_list(1); // go back to parse remaining headers
-            return;
         }
 
-        // derandomize the packet: if second processing
-        if (meta.is_recirculated) {
-            // TODO: derandomize the packet here using meta.nonce and meta.seed2
-        }
-
-        // perform forwarding actions
         if (hdr.ipv4.isValid()) {
             if (hdr.ipv4.ttl <= 1) {
                 drop();
@@ -382,29 +379,10 @@ control MyIngress(inout headers hdr,
             }
         }
 
-        // perform randomization
         if (meta.perform_rnd) {
-            port_index = (bit<32>) standard_metadata.egress_spec - 1;
-            if (!meta.is_recirculated && !meta.fetched_version) // only fetch if not done before
-                curr_version.read(meta.local_version, port_index);
-            check_update_from_ctrl(port_index, to_update, new_version);
-            if (to_update) {
-                update_prev_seed(port_index, 0);
-                update_prev_seed(port_index, 1);
-                update_curr_seed(port_index, 0);
-                update_curr_seed(port_index, 1);
-                update_version(port_index, new_version); // need to be the last operation
-            }
-            get_curr_seed(port_index, 0, meta.seed1);
-            get_curr_seed(port_index, 1, meta.seed2);
-            get_new_nonce(meta.nonce);
-
-            enc_seed = meta.seed2 ^ meta.nonce;
-            randomize_header(enc_seed);
-
             hdr.custom.setValid();
-            hdr.custom.version = meta.local_version;
-            hdr.custom.tag = meta.seed1 ^ meta.nonce;
+            hdr.custom.version = 0xaabbccdd;
+            hdr.custom.tag = 0xeeffaabbccddeeffaabbccddeeff;
             hdr.custom.etherType = hdr.ethernet.etherType;
             hdr.ethernet.etherType = TYPE_CUSTOM;
         } else {

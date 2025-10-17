@@ -13,7 +13,6 @@ ifndef TOPO
 TOPO = topology.json
 endif
 
-
 P4_PROGRAMS = switch.p4 router.p4
 compiled_json := $(patsubst %.p4,$(BUILD_DIR)/%.json,$(P4_PROGRAMS))
 
