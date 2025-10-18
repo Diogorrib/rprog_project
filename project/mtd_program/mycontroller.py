@@ -24,6 +24,8 @@ update_times = []   # time intervals for each link to update seeds
 update_state = []   # last update time for each link
 update_pending = [] # pending second phase of the update
 
+disable_seed_update = False
+
 def writeL2ForwardingRule(p4info_helper, sw, dst_eth_addr, port):
     """
     :param p4info_helper: the P4Info helper
@@ -400,11 +402,14 @@ def main(p4info_files, bmv2_files):
         print("Ready to forward packets...")
         start_time = int(time.time())
 
-        # FIXME: temporarily disabled
-        """ while True: # p4runtime checks for updates every second
+        if disable_seed_update:
+            print("Seed update disabled. Controller will not update seeds. Should be enabled after testing.")
+            return
+
+        while True: # p4runtime checks for updates every second
             time.sleep(1)
             curr_time = int(time.time()) - start_time
-            updateSeeds(p4info_helper_router, curr_time) """
+            updateSeeds(p4info_helper_router, curr_time)
 
     except KeyboardInterrupt:
         print(" Shutting down.")

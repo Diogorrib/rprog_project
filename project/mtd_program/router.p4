@@ -109,6 +109,8 @@ parser MyParser(packet_in packet,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
 
+    bit<128> enc_seed;
+
     state start {
         transition parse_ethernet;
     }
@@ -124,6 +126,10 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
+        transition parse_ipv4_next;
+    }
+
+    state parse_ipv4_next {
         transition select(hdr.ipv4.protocol) {
             PROTO_ICMP: parse_icmp;
             PROTO_TCP:  parse_tcp;
@@ -176,11 +182,18 @@ parser MyParser(packet_in packet,
     }
 
     state second_start {
-        hdr.ethernet.etherType = hdr.custom.etherType;
-        transition select(hdr.ethernet.etherType) { // FIXME: requires derandomization
-            TYPE_IPV4: parse_ipv4; // FIXME: requires different function or generalization of the current one
+        enc_seed = meta.nonce ^ meta.seed2;
+        hdr.ethernet.etherType = hdr.custom.etherType ^ enc_seed[15:0];
+        transition select(hdr.ethernet.etherType) {
+            TYPE_IPV4: parse_special_ipv4;
             default: accept;
         }
+    }
+
+    state parse_special_ipv4 {
+        packet.extract(hdr.ipv4);
+        hdr.ipv4.protocol = hdr.ipv4.protocol ^ enc_seed[23:16];
+        transition parse_ipv4_next;
     }
 }
 
@@ -233,7 +246,6 @@ control MyIngress(inout headers hdr,
                                     out bool to_update) {
         to_update = false;
         curr_version.read(meta.local_version, in_port_idx);
-        // meta.fetched_version = true;
         if (meta.local_version < packet_version) {
             to_update = true;
         }
@@ -244,6 +256,7 @@ control MyIngress(inout headers hdr,
                                   out bool to_update,
                                   out bit<32> new_version) {
         to_update = false;
+        curr_version.read(meta.local_version, out_port_idx);
         ctrl_version.read(new_version, out_port_idx);
         if (meta.local_version < new_version) {
             to_update = true;
@@ -311,6 +324,14 @@ control MyIngress(inout headers hdr,
         nonce = nonce ^ (bit<128>)aux; // FIXME: use a better PRNG
     }
 
+    action randomize_fields(bit<128> enc_seed) {
+        // TODO: implement field randomization for fields marked as "yes" in the header definitions
+    }
+
+    action derandomize_fields(bit<128> enc_seed) {
+        // TODO: implement field derandomization for fields marked as "yes" in the header definitions
+    }
+
     table ipv4_exact {
         key = {
             hdr.ipv4.dstAddr: exact;
@@ -352,19 +373,48 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
+        bit<128> enc_seed;
+        bit<32>  port_index;
+        bit<32>  new_version;
+        bool     to_update;
 
+        // derandomization section
         if (hdr.custom.isValid()) {
-            // We require this resubmit as we explain above in the parser
+
+            // secret fetching and seed updating
             if (!meta.is_second_parse) {
+                port_index = (bit<32>) standard_metadata.ingress_port - 1;
+                check_update_from_packet(port_index, hdr.custom.version, to_update);
+                if (to_update) {
+                    update_prev_seed(port_index, 0);
+                    update_prev_seed(port_index, 1);
+                    update_curr_seed(port_index, 0);
+                    update_curr_seed(port_index, 1);
+                    update_version(port_index, hdr.custom.version); // need to be the last operation
+                }
+
+                // here it can never be lower since we perform the update above
+                if (meta.local_version == hdr.custom.version) {
+                    get_curr_seed(port_index, 0, meta.seed1);
+                    get_curr_seed(port_index, 1, meta.seed2);
+                } else { // meta.local_version > hdr.custom.version
+                    get_prev_seed(port_index, 0, meta.seed1);
+                    get_prev_seed(port_index, 1, meta.seed2);
+                }
+
+                meta.nonce = hdr.custom.tag ^ meta.seed1;
                 meta.is_second_parse = true;
-                resubmit_preserving_field_list(FIELD_LIST_ID);
+                resubmit_preserving_field_list(FIELD_LIST_ID); // We require this resubmit as we explain above in the parser
                 return;
+
+            // derandomization of headers (except etherType and protocol, done in the parser)
             } else {
-                hdr.ethernet.etherType = hdr.custom.etherType;
+                derandomize_fields(meta.nonce ^ meta.seed2);
                 hdr.custom.setInvalid();
             }
         }
 
+        // forwarding section
         if (hdr.ipv4.isValid()) {
             if (hdr.ipv4.ttl <= 1) {
                 drop();
@@ -379,12 +429,30 @@ control MyIngress(inout headers hdr,
             }
         }
 
+        // randomization section
         if (meta.perform_rnd) {
+            port_index = (bit<32>) standard_metadata.egress_spec - 1;
+            check_update_from_ctrl(port_index, to_update, new_version);
+            if (to_update) {
+                update_prev_seed(port_index, 0);
+                update_prev_seed(port_index, 1);
+                update_curr_seed(port_index, 0);
+                update_curr_seed(port_index, 1);
+                update_version(port_index, new_version); // need to be the last operation
+            }
+            get_curr_seed(port_index, 0, meta.seed1);
+            get_curr_seed(port_index, 1, meta.seed2);
+            get_new_nonce(meta.nonce);
+
+            enc_seed = meta.nonce ^ meta.seed2;
+            randomize_fields(enc_seed);
+
             hdr.custom.setValid();
-            hdr.custom.version = 0xaabbccdd;
-            hdr.custom.tag = 0xeeffaabbccddeeffaabbccddeeff;
-            hdr.custom.etherType = hdr.ethernet.etherType;
+            hdr.custom.version = meta.local_version;
+            hdr.custom.tag = meta.nonce ^ meta.seed1;
+            hdr.custom.etherType = hdr.ethernet.etherType ^ enc_seed[15:0];
             hdr.ethernet.etherType = TYPE_CUSTOM;
+            hdr.ipv4.protocol = hdr.ipv4.protocol ^ enc_seed[23:16];
         } else {
             hdr.custom.setInvalid();
         }
