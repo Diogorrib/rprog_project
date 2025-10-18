@@ -24,6 +24,8 @@ update_times = []   # time intervals for each link to update seeds
 update_state = []   # last update time for each link
 update_pending = [] # pending second phase of the update
 
+disable_seed_update = False
+
 def writeL2ForwardingRule(p4info_helper, sw, dst_eth_addr, port):
     """
     :param p4info_helper: the P4Info helper
@@ -288,15 +290,6 @@ def distributeSeeds(p4info_helper, router_list):
     global_links.append((r4, r5, 1, 2))
 
     for (src, dst, src_index, dst_index) in global_links:
-        """ for i in range(2):
-            seed = seed_handler.generate_seed()
-            #print("Generated seed%d: %s\tfor link %s-%s" % (i+1, seed_handler.seed_to_hex(seed), src.name, dst.name))
-            writeValueToRegister(p4info_helper, src, src_index*2 + i, "curr_seed", seed)
-            writeValueToRegister(p4info_helper, dst, dst_index*2 + i, "curr_seed", seed)
-        writeValueToRegister(p4info_helper, src, src_index, "curr_version", 0)
-        writeValueToRegister(p4info_helper, dst, dst_index, "curr_version", 0)
-        writeValueToRegister(p4info_helper, src, src_index, "ctrl_version", 0)
-        writeValueToRegister(p4info_helper, dst, dst_index, "ctrl_version", 0) """
         for i in range(2):
             seed = seed_handler.generate_seed()
             writeValueToRegister(p4info_helper, src, src_index*2 + i, "next_seed", seed)
@@ -308,7 +301,8 @@ def distributeSeeds(p4info_helper, router_list):
 
     for sw in router_list:
         seed = seed_handler.generate_seed()
-        writeValueToRegister(p4info_helper, sw, 0, "base_prng", seed)
+        writeValueToRegister(p4info_helper, sw, 0, "base_prng", seed + b'\x00\x00\x00\x00')
+
     for _ in range(len(global_links)):
         update_times.append(random.randint(25, 35))
         update_state.append(0)
@@ -407,6 +401,10 @@ def main(p4info_files, bmv2_files):
         print("Initial seeds distributed.")
         print("Ready to forward packets...")
         start_time = int(time.time())
+
+        if disable_seed_update:
+            print("Seed update disabled. Controller will not update seeds. Should be enabled after testing.")
+            return
 
         while True: # p4runtime checks for updates every second
             time.sleep(1)
