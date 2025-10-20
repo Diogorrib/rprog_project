@@ -1,6 +1,7 @@
 /* -*- P4_16 -*- */
 #include <core.p4>
 #include <v1model.p4>
+#include "fallback_crypto.p4"
 
 #define FIELD_LIST_ID 1
 
@@ -18,13 +19,13 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 
-header ethernet_t {
+header ethernet_t { // 96 bits
     macAddr_t dstAddr;   // yes: reveal target device identity or multicast group
     macAddr_t srcAddr;   // yes: reveal source device identity
     bit<16>   etherType; // no: will be a fixed value (TYPE_CUSTOM)
 }
 
-header ipv4_t {
+header ipv4_t { // 84 bits + 8 bits for protocol
     bit<4>    version;        // yes: reveal IP version
     bit<4>    ihl;
     bit<8>    diffserv;
@@ -39,33 +40,33 @@ header ipv4_t {
     ip4Addr_t dstAddr;        // yes: reveal target IP address
 }
 
-header custom_t {
+header custom_t { // 0 bits + 16 bits for the etherType
     bit<128> tag;
     bit<32>  version;
     bit<16>  etherType; // yes: reveal original etherType (and thus the next protocol)
 }
 
-header icmp_t {
+header icmp_t { // 48 bits
     bit<8>  type;         // yes: reveal ICMP type
     bit<8>  code;         // yes: reveal reason for message
     bit<16> checksum;
     bit<32> restOfHeader; // yes: reveal info depending on type/code
 }
 
-header udp_t {
+header udp_t { // 32 bits
     bit<16> srcPort; // yes: reveal application/service identity if not ephemeral
     bit<16> dstPort; // yes: reveal application/service identity
     bit<16> length;
     bit<16> checksum;
 }
 
-header tcp_t {
+header tcp_t { // 121 bits (or 124 bits if merged reserved with flags)
     bit<16> srcPort;   // yes: reveal application/service identity if not ephemeral
     bit<16> dstPort;   // yes: reveal application/service identity
     bit<32> seqNo;     // yes: reveal ordering and link to the same host
     bit<32> ackNo;     // yes: reveal ordering and link to the same host
     bit<4>  dataOffset;
-    bit<3>  reserved;
+    bit<3>  reserved;  // no: only if required to merge to the flag
     bit<9>  flags;     // yes: reveal connection state
     bit<16> window;    // maybe: reveal flow control state
     bit<16> checksum;
@@ -321,7 +322,7 @@ control MyIngress(inout headers hdr,
         base_prng.read(aux, 4);
         aux = aux + 1;
         base_prng.write(4, aux);
-        nonce = nonce ^ (bit<128>)aux; // FIXME: use a better PRNG
+        nonce = generate_nonce(nonce, aux);
     }
 
     action randomize_fields(bit<128> enc_seed) {
