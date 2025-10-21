@@ -116,6 +116,132 @@ struct headers {
 }
 
 /*************************************************************************
+*********************** H E A D E R  O P E R A T I O N S *****************
+*************************************************************************/
+
+void encrypt_headers(inout headers hdr, in bit<128> enc_seed) {
+    if (hdr.ethernet.isValid()) {
+        bit<96> fields_96 = (bit<96>)hdr.ethernet.dstAddr;
+        fields_96 = (fields_96 << 48) | (bit<96>)hdr.ethernet.srcAddr;
+
+        feistel_encrypt_96(fields_96, enc_seed);
+        hdr.ethernet.srcAddr = fields_96[95:48];
+        hdr.ethernet.dstAddr = fields_96[47:0];
+    }
+
+    if (hdr.ipv4.isValid()) {
+        bit<84> fields_84 = (bit<84>)hdr.ipv4.version;
+        fields_84 = (fields_84 << 3)  | (bit<84>)hdr.ipv4.flags;
+        fields_84 = (fields_84 << 13) | (bit<84>)hdr.ipv4.fragOffset;
+        fields_84 = (fields_84 << 32) | (bit<84>)hdr.ipv4.srcAddr;
+        fields_84 = (fields_84 << 32) | (bit<84>)hdr.ipv4.dstAddr;
+
+        feistel_encrypt_84(fields_84, enc_seed);
+        hdr.ipv4.version    = fields_84[83:80];
+        hdr.ipv4.flags      = fields_84[79:77];
+        hdr.ipv4.fragOffset = fields_84[76:64];
+        hdr.ipv4.srcAddr    = fields_84[63:32];
+        hdr.ipv4.dstAddr    = fields_84[31:0];
+    }
+
+    if (hdr.icmp.isValid()) {
+        bit<48> fields_48 = (bit<48>)hdr.icmp.type;
+        fields_48 = (fields_48 << 8)  | (bit<48>)hdr.icmp.code;
+        fields_48 = (fields_48 << 32) | (bit<48>)hdr.icmp.restOfHeader;
+
+        feistel_encrypt_48(fields_48, enc_seed);
+        hdr.icmp.type         = fields_48[47:40];
+        hdr.icmp.code         = fields_48[39:32];
+        hdr.icmp.restOfHeader = fields_48[31:0];
+    } else if (hdr.udp.isValid()) {
+        bit<32> fields_32 = (bit<32>)hdr.udp.srcPort;
+        fields_32 = (fields_32 << 16) | (bit<32>)hdr.udp.dstPort;
+
+        feistel_encrypt_32(fields_32, enc_seed);
+        hdr.udp.srcPort = fields_32[31:16];
+        hdr.udp.dstPort = fields_32[15:0];
+    } else if (hdr.tcp.isValid()) {
+        bit<124> fields_124 = (bit<124>)hdr.tcp.srcPort;
+        fields_124 = (fields_124 << 16) | (bit<124>)hdr.tcp.dstPort;
+        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.seqNo;
+        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.ackNo;
+        fields_124 = (fields_124 << 3)  | (bit<124>)hdr.tcp.reserved;
+        fields_124 = (fields_124 << 9)  | (bit<124>)hdr.tcp.flags;
+        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.urgentPtr;
+
+        feistel_encrypt_124(fields_124, enc_seed);
+        hdr.tcp.srcPort   = fields_124[123:108];
+        hdr.tcp.dstPort   = fields_124[107:92];
+        hdr.tcp.seqNo     = fields_124[91:60];
+        hdr.tcp.ackNo     = fields_124[59:28];
+        hdr.tcp.reserved  = fields_124[27:25];
+        hdr.tcp.flags     = fields_124[24:16];
+        hdr.tcp.urgentPtr = fields_124[15:0];
+    }
+}
+
+void decrypt_headers(inout headers hdr, in bit<128> enc_seed) {
+    if (hdr.ethernet.isValid()) {
+        bit<96> fields_96 = (bit<96>)hdr.ethernet.dstAddr;
+        fields_96 = (fields_96 << 48) | (bit<96>)hdr.ethernet.srcAddr;
+
+        feistel_decrypt_96(fields_96, enc_seed);
+        hdr.ethernet.srcAddr = fields_96[95:48];
+        hdr.ethernet.dstAddr = fields_96[47:0];
+    }
+
+    if (hdr.ipv4.isValid()) {
+        bit<84> fields_84 = (bit<84>)hdr.ipv4.version;
+        fields_84 = (fields_84 << 3)  | (bit<84>)hdr.ipv4.flags;
+        fields_84 = (fields_84 << 13) | (bit<84>)hdr.ipv4.fragOffset;
+        fields_84 = (fields_84 << 32) | (bit<84>)hdr.ipv4.srcAddr;
+        fields_84 = (fields_84 << 32) | (bit<84>)hdr.ipv4.dstAddr;
+
+        feistel_decrypt_84(fields_84, enc_seed);
+        hdr.ipv4.version    = fields_84[83:80];
+        hdr.ipv4.flags      = fields_84[79:77];
+        hdr.ipv4.fragOffset = fields_84[76:64];
+        hdr.ipv4.srcAddr    = fields_84[63:32];
+        hdr.ipv4.dstAddr    = fields_84[31:0];
+    }
+
+    if (hdr.icmp.isValid()) {
+        bit<48> fields_48 = (bit<48>)hdr.icmp.type;
+        fields_48 = (fields_48 << 8)  | (bit<48>)hdr.icmp.code;
+        fields_48 = (fields_48 << 32) | (bit<48>)hdr.icmp.restOfHeader;
+
+        feistel_decrypt_48(fields_48, enc_seed);
+        hdr.icmp.type         = fields_48[47:40];
+        hdr.icmp.code         = fields_48[39:32];
+        hdr.icmp.restOfHeader = fields_48[31:0];
+    } else if (hdr.udp.isValid()) {
+        bit<32> fields_32 = (bit<32>)hdr.udp.srcPort;
+        fields_32 = (fields_32 << 16) | (bit<32>)hdr.udp.dstPort;
+
+        feistel_decrypt_32(fields_32, enc_seed);
+        hdr.udp.srcPort = fields_32[31:16];
+        hdr.udp.dstPort = fields_32[15:0];
+    } else if (hdr.tcp.isValid()) {
+        bit<124> fields_124 = (bit<124>)hdr.tcp.srcPort;
+        fields_124 = (fields_124 << 16) | (bit<124>)hdr.tcp.dstPort;
+        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.seqNo;
+        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.ackNo;
+        fields_124 = (fields_124 << 3)  | (bit<124>)hdr.tcp.reserved;
+        fields_124 = (fields_124 << 9)  | (bit<124>)hdr.tcp.flags;
+        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.urgentPtr;
+
+        feistel_decrypt_124(fields_124, enc_seed);
+        hdr.tcp.srcPort   = fields_124[123:108];
+        hdr.tcp.dstPort   = fields_124[107:92];
+        hdr.tcp.seqNo     = fields_124[91:60];
+        hdr.tcp.ackNo     = fields_124[59:28];
+        hdr.tcp.reserved  = fields_124[27:25];
+        hdr.tcp.flags     = fields_124[24:16];
+        hdr.tcp.urgentPtr = fields_124[15:0];
+    }
+}
+
+/*************************************************************************
 *********************** P A R S E R  ***********************************
 *************************************************************************/
 
@@ -315,11 +441,11 @@ control MyIngress(inout headers hdr,
     }
 
     action randomize_fields(bit<128> enc_seed) {
-        // TODO: implement field randomization for fields marked as "yes" in the header definitions
+        encrypt_headers(hdr, enc_seed);
     }
 
     action derandomize_fields(bit<128> enc_seed) {
-        // TODO: implement field derandomization for fields marked as "yes" in the header definitions
+        decrypt_headers(hdr, enc_seed);
     }
 
     table ipv4_exact {
