@@ -90,6 +90,20 @@ struct metadata {
     bit<128> nonce;
 
     bool     perform_rnd;
+
+    // ICMP checksum calculation fields
+    bit<16> icmp_identifier;
+    bit<16> icmp_seq_number;
+
+    // UDP / TCP length calculation fields
+    bit<16> l4_length;
+
+    // TCP checksum calculation fields
+    bit<16> tcp_seq_hi;
+    bit<16> tcp_seq_lo;
+    bit<16> tcp_ack_hi;
+    bit<16> tcp_ack_lo;
+    bit<16> tcp_flags;
 }
 
 struct headers {
@@ -154,26 +168,6 @@ parser MyParser(packet_in packet,
         transition accept;
     }
 
-    /* As this implementation goal is to randomize fields in the headers,
-       including the protocols in use, so it makes it more difficult for
-       malicious actors to identify them (and thus launch attacks),
-       we need to extract local secret information to recover the original
-       etherType and protocol information. However, this implies reading
-       from registers, operation that is not supported in the parser for
-       the target we are using.
-       To work around this limitation, we perform a first parse of the
-       headers that are always present (ethernet and custom), then the
-       custom.tag enables the derivation of the original enc_seed, from
-       a local secret stored in registers.
-       Then a second parse is triggered through a resubmit, where the
-       original etherType and protocol fields can be recovered and the
-       remaining headers parsed accordingly.
-       In summary we require the following steps:
-       -> first_parse
-           -> first_processing (extract secrets, derive seeds and save in metadata)
-               -> second_parse (use metadata to recover original fields)
-                   -> second_processing and then deparsing as usual
-    */
     state parse_custom {
         packet.extract(hdr.custom);
         transition select(meta.is_second_parse) {
@@ -215,11 +209,6 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
-    /* We split 32-bit registers to store 128-bit values to allow use from CLI,
-       as we explain p4runtime does not implement this operation yet, so CLI is the workaround.
-       However, CLI can only convert up to 64-bit unsigned values, so 32-bit was the highest
-       power of 2 we could use.
-       128-bit registers that did not require runtime intervention were not split. */
     register<bit<128>>(6) prev_seed; // up to 3 links each with a seed-pair (128 bits)
     register<bit<128>>(6) curr_seed; // up to 3 links each with a seed-pair (128 bits)
     register<bit<32>>(6*4) next_seed; // up to 3 links each with a seed-pair (128 bits = 4x32 bits)
@@ -467,7 +456,26 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    apply {  }
+    apply {
+        // checksum recalculation section
+        if (hdr.icmp.isValid()) {
+            meta.icmp_identifier = hdr.icmp.restOfHeader[31:16];
+            meta.icmp_seq_number = hdr.icmp.restOfHeader[15:0];
+        }
+        if (hdr.udp.isValid() || hdr.tcp.isValid()) {
+            bit<16> ip_hdr_bytes = (bit<16>)(hdr.ipv4.ihl) << 2;
+            meta.l4_length = hdr.ipv4.totalLen - ip_hdr_bytes;
+        }
+        if (hdr.tcp.isValid()) {
+            meta.tcp_seq_hi = hdr.tcp.seqNo[31:16];
+            meta.tcp_seq_lo = hdr.tcp.seqNo[15:0];
+            meta.tcp_ack_hi = hdr.tcp.ackNo[31:16];
+            meta.tcp_ack_lo = hdr.tcp.ackNo[15:0];
+            meta.tcp_flags = (bit<16>)(hdr.tcp.dataOffset) << 12 |
+                             (bit<16>)(hdr.tcp.reserved)   << 9  |
+                             (bit<16>)(hdr.tcp.flags);
+        }
+    }
 }
 
 /*************************************************************************
@@ -475,7 +483,7 @@ control MyEgress(inout headers hdr,
 *************************************************************************/
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
-     apply {
+    apply {
         update_checksum(
         hdr.ipv4.isValid(),
             { hdr.ipv4.version,
@@ -490,6 +498,44 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
               hdr.ipv4.srcAddr,
               hdr.ipv4.dstAddr },
             hdr.ipv4.hdrChecksum,
+            HashAlgorithm.csum16);
+        update_checksum_with_payload(
+        hdr.icmp.isValid(),
+            { hdr.icmp.type,
+              hdr.icmp.code,
+              meta.icmp_identifier,
+              meta.icmp_seq_number },
+            hdr.icmp.checksum,
+            HashAlgorithm.csum16);
+        update_checksum_with_payload(
+        hdr.udp.isValid(),
+            { hdr.ipv4.srcAddr,
+              hdr.ipv4.dstAddr,
+              8w0,
+              hdr.ipv4.protocol,
+              meta.l4_length,
+              hdr.udp.srcPort,
+              hdr.udp.dstPort,
+              hdr.udp.length },
+            hdr.udp.checksum,
+            HashAlgorithm.csum16);
+        update_checksum_with_payload(
+        hdr.tcp.isValid(),
+            { hdr.ipv4.srcAddr,
+              hdr.ipv4.dstAddr,
+              8w0,
+              hdr.ipv4.protocol,
+              meta.l4_length,
+              hdr.tcp.srcPort,
+              hdr.tcp.dstPort,
+              meta.tcp_seq_hi,
+              meta.tcp_seq_lo,
+              meta.tcp_ack_hi,
+              meta.tcp_ack_lo,
+              meta.tcp_flags,
+              hdr.tcp.window,
+              hdr.tcp.urgentPtr },
+            hdr.tcp.checksum,
             HashAlgorithm.csum16);
     }
 }

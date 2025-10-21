@@ -2,11 +2,14 @@ from binascii import unhexlify
 
 """
 Helper file to understand the packet structure from raw data.
-Only works correctly for packets that contain the real etherType and protocol fields.
 Insert the input packet hex string/stream below.
+- For packets that are in plain, set parse_type = "default".
+- For packets that encapsulate an ICMP packet, set parse_type = "parse_icmp".
+- For other types of packets, extend the parser as needed, following the same approach as icmp.
 """
 
-input_packet = "08000000221108000000aa1188b50000eeffaabbccddeeffaabbccddeeffaabbccdd0800450000549f5540003f01854f0a0001010a0002040800819d91d70001745cf26800000000b6f1080000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637"
+input_packet = "08000000221108000000aa1188b575d375588a7f32d6b3dc1e018711939d00000001da7545000054cbc140003ffa57ea0a0001010a00020408005af6471500019ccdf7680000000001ea010000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637"
+parse_type = "parse_icmp"
 
 hexstr = input_packet[2:] if input_packet.startswith("0x") else input_packet
 data = unhexlify(hexstr)
@@ -118,27 +121,42 @@ def parse_tcp(packet, offset):
 
 
 offset = 0
+type = 'ethernet'
 while True:
     if type == 'ethernet':
         eth_hdr, offset = parse_ethernet(data, offset)
         print("Ethernet Header:", eth_hdr)
-        type = 'custom_t' if eth_hdr["ethertype"] == "0x88b5" else 'ipv4'
+        if eth_hdr["ethertype"] != "0x88b5":
+            parse_type = "default"
+        match parse_type:
+            case "parse_icmp":
+                type = 'custom_t'
+            case _:
+                type = 'custom_t' if eth_hdr["ethertype"] == "0x88b5" else 'ipv4'
     elif type == 'custom_t':
         custom_hdr, offset = parse_custom_t(data, offset)
         print("Custom Header:", custom_hdr)
-        type = 'ipv4' if custom_hdr["etherType"] == "0x0800" else ''
+        match parse_type:
+            case "parse_icmp":
+                type = 'ipv4'
+            case _:
+                type = 'ipv4' if custom_hdr["etherType"] == "0x0800" else ''
     elif type == 'ipv4':
         ipv4_hdr, offset = parse_ipv4_fixed(data, offset)
         print("IPv4 Header:", ipv4_hdr)
-        match ipv4_hdr["protocol"]:
-            case 1:
+        match parse_type:
+            case "parse_icmp":
                 type = 'icmp'
-            case 6:
-                type = 'tcp'
-            case 17:
-                type = 'udp'
             case _:
-                type = ''
+                match ipv4_hdr["protocol"]:
+                    case 1:
+                        type = 'icmp'
+                    case 6:
+                        type = 'tcp'
+                    case 17:
+                        type = 'udp'
+                    case _:
+                        type = ''
     elif type == 'icmp':
         icmp_hdr, offset = parse_icmp(data, offset)
         print("ICMP Header:", icmp_hdr)
