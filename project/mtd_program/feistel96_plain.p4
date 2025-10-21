@@ -12,14 +12,14 @@ bit<128> rng128_forward(inout bit<128> s) {
 
 bit<48> F_round(inout bit<48> R, inout bit<128> round_key) {
     bit<80> zero=0;
-    bit<128> r128;
-    r128[127:48]=0;
+    bit<128> r128=0;
+    r128[127:48]=zero;
     r128[47:0]=R;
     bit<128> rnging1;
     bit<128> rnging2;
     rnging1=r128 ^ round_key;
     bit<128> mixed  = rng128_forward(rnging1);
-    rnging1=r128 ^ round_key;
+    rnging2=r128 ^ round_key;
     bit<128> mixed2 = rng128_forward(rnging2);
     bit<128> x = mixed ^ mixed2;
     bit<64> x_lo = (bit<64>) x;
@@ -28,7 +28,7 @@ bit<48> F_round(inout bit<48> R, inout bit<128> round_key) {
     return (bit<48>) reduced;
 }
 
-void derive_round_keys(bit<128> enc_seed, inout bit<128> k1, inout bit<128> k2, inout bit<128> k3, inout bit<128> k4, inout bit<128> k5, inout bit<128> k6, inout bit<128> k7, inout bit<128> k8) {
+void derive_round_keys(inout bit<128> enc_seed, inout bit<128> k1, inout bit<128> k2, inout bit<128> k3, inout bit<128> k4, inout bit<128> k5, inout bit<128> k6, inout bit<128> k7, inout bit<128> k8) {
     bit<128> s = enc_seed;
     s = rng128_forward(s); k1 = s;
     s = rng128_forward(s); k2 = s;
@@ -131,38 +131,42 @@ void decrypt96(inout bit<48> L, inout bit<48> R, inout bit<128> k1, inout bit<12
     round(L_prev, R_prev, L, R, k1);
 }*/
 
-void feistel96_encrypt(bit<128> enc_seed, inout bit<96> value){
+void feistel96_encrypt(in bit<128> enc_seed, inout bit<96> value){
     bit<48> left;
     bit<48> right;
-    bit<128> k1;
-    bit<128> k2;
-    bit<128> k3;
-    bit<128> k4;
-    bit<128> k5;
-    bit<128> k6;
-    bit<128> k7;
-    bit<128> k8;
+    bit<128> k1=0;
+    bit<128> k2=0;
+    bit<128> k3=0;
+    bit<128> k4=0;
+    bit<128> k5=0;
+    bit<128> k6=0;
+    bit<128> k7=0;
+    bit<128> k8=0;
+    bit<128> seed_in;
+    seed_in=enc_seed;
     left  = value[95:48];  // upper half (bits 95 down to 48)
     right = value[47:0];   // lower half (bits 47 down to 0)
-    derive_round_keys(enc_seed, k1, k2, k3, k4, k5, k6, k7, k8);
+    derive_round_keys(seed_in, k1, k2, k3, k4, k5, k6, k7, k8);
     encrypt96(left, right, k1, k2, k3, k4, k5, k6, k7, k8);
     value[95:48] = left;
     value[47:0]  = right;
 }
-void feistel96_decrypt(bit<128> enc_seed, inout bit<96> value){
+void feistel96_decrypt(in bit<128> enc_seed, inout bit<96> value){
     bit<48> left;
     bit<48> right;
-    bit<128> k1;
-    bit<128> k2;
-    bit<128> k3;
-    bit<128> k4;
-    bit<128> k5;
-    bit<128> k6;
-    bit<128> k7;
-    bit<128> k8;
+    bit<128> k1=0;
+    bit<128> k2=0;
+    bit<128> k3=0;
+    bit<128> k4=0;
+    bit<128> k5=0;
+    bit<128> k6=0;
+    bit<128> k7=0;
+    bit<128> k8=0;
+    bit<128> seed_in;
+    seed_in=enc_seed;
     left  = value[95:48];  // upper half (bits 95 down to 48)
     right = value[47:0];   // lower half (bits 47 down to 0)
-    derive_round_keys(enc_seed, k1, k2, k3, k4, k5, k6, k7, k8);
+    derive_round_keys(seed_in, k1, k2, k3, k4, k5, k6, k7, k8);
     decrypt96(left, right, k1, k2, k3, k4, k5, k6, k7, k8);
     value[95:48] = left;
     value[47:0]  = right;
