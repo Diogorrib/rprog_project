@@ -5,11 +5,13 @@ Helper file to understand the packet structure from raw data.
 Insert the input packet hex string/stream below.
 - For packets that are in plain, set parse_type = "default".
 - For packets that encapsulate an ICMP packet, set parse_type = "parse_icmp".
-- For other types of packets, extend the parser as needed, following the same approach as icmp.
+- For packets that encapsulate a UDP packet, set parse_type = "parse_udp".
+- For packets that encapsulate a TCP packet, set parse_type = "parse_tcp".
+- For other types of packets, extend the parser as needed.
 """
 
-input_packet = "08000000221108000000aa1188b575d375588a7f32d6b3dc1e018711939d00000001da7545000054cbc140003ffa57ea0a0001010a00020408005af6471500019ccdf7680000000001ea010000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637"
-parse_type = "parse_icmp"
+input_packet = ""
+parse_type = "default"
 
 hexstr = input_packet[2:] if input_packet.startswith("0x") else input_packet
 data = unhexlify(hexstr)
@@ -129,7 +131,7 @@ while True:
         if eth_hdr["ethertype"] != "0x88b5":
             parse_type = "default"
         match parse_type:
-            case "parse_icmp":
+            case "parse_icmp" | "parse_udp" | "parse_tcp":
                 type = 'custom_t'
             case _:
                 type = 'custom_t' if eth_hdr["ethertype"] == "0x88b5" else 'ipv4'
@@ -137,7 +139,7 @@ while True:
         custom_hdr, offset = parse_custom_t(data, offset)
         print("Custom Header:", custom_hdr)
         match parse_type:
-            case "parse_icmp":
+            case "parse_icmp" | "parse_udp" | "parse_tcp":
                 type = 'ipv4'
             case _:
                 type = 'ipv4' if custom_hdr["etherType"] == "0x0800" else ''
@@ -147,6 +149,10 @@ while True:
         match parse_type:
             case "parse_icmp":
                 type = 'icmp'
+            case "parse_udp":
+                type = 'udp'
+            case "parse_tcp":
+                type = 'tcp'
             case _:
                 match ipv4_hdr["protocol"]:
                     case 1:
