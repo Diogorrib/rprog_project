@@ -2,18 +2,6 @@
 #define FEISTEL96_PLAIN_P4
 const bit<128> OFFSET128 = 0x0123456789ABCDEF0FEDCBA987654321;
 
-
-struct pnrg_state_t {
-    bit<128> k1;
-    bit<128> k2;
-    bit<128> k3;
-    bit<128> k4;
-    bit<128> k5;
-    bit<128> k6;
-    bit<128> k7;
-    bit<128> k8;
-};
-
 bit<128> rng128_forward(inout bit<128> s) {
     bit<128> t = s + OFFSET128;
     t = t ^ (t << 23);
@@ -40,82 +28,82 @@ bit<48> F_round(inout bit<48> R, inout bit<128> round_key) {
     return (bit<48>) reduced;
 }
 
-void derive_round_keys(bit<128> enc_seed, inout pnrg_state_t meta) {
+void derive_round_keys(bit<128> enc_seed, inout bit<128> k1, inout bit<128> k2, inout bit<128> k3, inout bit<128> k4, inout bit<128> k5, inout bit<128> k6, inout bit<128> k7, inout bit<128> k8) {
     bit<128> s = enc_seed;
-    s = rng128_forward(s); meta.k1 = s;
-    s = rng128_forward(s); meta.k2 = s;
-    s = rng128_forward(s); meta.k3 = s;
-    s = rng128_forward(s); meta.k4 = s;
-    s = rng128_forward(s); meta.k5 = s;
-    s = rng128_forward(s); meta.k6 = s;
-    s = rng128_forward(s); meta.k7 = s;
-    s = rng128_forward(s); meta.k8 = s;
+    s = rng128_forward(s); k1 = s;
+    s = rng128_forward(s); k2 = s;
+    s = rng128_forward(s); k3 = s;
+    s = rng128_forward(s); k4 = s;
+    s = rng128_forward(s); k5 = s;
+    s = rng128_forward(s); k6 = s;
+    s = rng128_forward(s); k7 = s;
+    s = rng128_forward(s); k8 = s;
 }
 
-void encrypt96(inout bit<48> L, inout bit<48> R, inout pnrg_state_t meta) {
+void encrypt96(inout bit<48> L, inout bit<48> R, inout bit<128> k1, inout bit<128> k2, inout bit<128> k3, inout bit<128> k4, inout bit<128> k5, inout bit<128> k6, inout bit<128> k7, inout bit<128> k8) {
     bit<48> t; 
     bit<48> newR;
 
-    t = F_round(R, meta.k1); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k2); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k3); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k4); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k5); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k6); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k7); newR = L ^ t; L = R; R = newR;
-    t = F_round(R, meta.k8); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k1); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k2); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k3); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k4); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k5); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k6); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k7); newR = L ^ t; L = R; R = newR;
+    t = F_round(R, k8); newR = L ^ t; L = R; R = newR;
 }
 
-void decrypt96(inout bit<48> L, inout bit<48> R, inout pnrg_state_t meta) {
+void decrypt96(inout bit<48> L, inout bit<48> R, inout bit<128> k1, inout bit<128> k2, inout bit<128> k3, inout bit<128> k4, inout bit<128> k5, inout bit<128> k6, inout bit<128> k7, inout bit<128> k8) {
         bit<48> L_prev;
         bit<48> R_prev;
         bit<48> t;
 
     // Round 8 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k8);
+    t = F_round(R_prev, k8);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 7 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k7);
+    t = F_round(R_prev, k7);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 6 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k6);
+    t = F_round(R_prev, k6);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 5 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k5);
+    t = F_round(R_prev, k5);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 4 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k4);
+    t = F_round(R_prev, k4);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 3 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k3);
+    t = F_round(R_prev, k3);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 2 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k2);
+    t = F_round(R_prev, k2);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 
     // Round 1 inverse
     R_prev = L;
-    t = F_round(R_prev, meta.k1);
+    t = F_round(R_prev, k1);
     L_prev = R ^ t;
     L = L_prev; R = R_prev;
 }
@@ -128,40 +116,54 @@ void decrypt96(inout bit<48> L, inout bit<48> R, inout pnrg_state_t meta) {
     L = L_prev; R = R_prev;
 }
 
-void decrypt96(inout bit<48> L, inout bit<48> R) {
+void decrypt96(inout bit<48> L, inout bit<48> R, inout bit<128> k1, inout bit<128> k2, inout bit<128> k3, inout bit<128> k4, inout bit<128> k5, inout bit<128> k6, inout bit<128> k7, inout bit<128> k8) {
     bit<48> L_prev;
     bit<48> R_prev;
     bit<48> t;
 
-    round(L_prev, R_prev, L, R, meta.k8);
-    round(L_prev, R_prev, L, R, meta.k7);
-    round(L_prev, R_prev, L, R, meta.k6);
-    round(L_prev, R_prev, L, R, meta.k5);
-    round(L_prev, R_prev, L, R, meta.k4);
-    round(L_prev, R_prev, L, R, meta.k3);
-    round(L_prev, R_prev, L, R, meta.k2);
-    round(L_prev, R_prev, L, R, meta.k1);
+    round(L_prev, R_prev, L, R, k8);
+    round(L_prev, R_prev, L, R, k7);
+    round(L_prev, R_prev, L, R, k6);
+    round(L_prev, R_prev, L, R, k5);
+    round(L_prev, R_prev, L, R, k4);
+    round(L_prev, R_prev, L, R, k3);
+    round(L_prev, R_prev, L, R, k2);
+    round(L_prev, R_prev, L, R, k1);
 }*/
 
 void feistel96_encrypt(bit<128> enc_seed, inout bit<96> value){
     bit<48> left;
     bit<48> right;
-    pnrg_state_t meta;
+    bit<128> k1;
+    bit<128> k2;
+    bit<128> k3;
+    bit<128> k4;
+    bit<128> k5;
+    bit<128> k6;
+    bit<128> k7;
+    bit<128> k8;
     left  = value[95:48];  // upper half (bits 95 down to 48)
     right = value[47:0];   // lower half (bits 47 down to 0)
-    derive_round_keys(enc_seed, meta);
-    encrypt96(left, right, meta);
+    derive_round_keys(enc_seed, k1, k2, k3, k4, k5, k6, k7, k8);
+    encrypt96(left, right, k1, k2, k3, k4, k5, k6, k7, k8);
     value[95:48] = left;
     value[47:0]  = right;
 }
 void feistel96_decrypt(bit<128> enc_seed, inout bit<96> value){
     bit<48> left;
     bit<48> right;
-    pnrg_state_t meta;
+    bit<128> k1;
+    bit<128> k2;
+    bit<128> k3;
+    bit<128> k4;
+    bit<128> k5;
+    bit<128> k6;
+    bit<128> k7;
+    bit<128> k8;
     left  = value[95:48];  // upper half (bits 95 down to 48)
     right = value[47:0];   // lower half (bits 47 down to 0)
-    derive_round_keys(enc_seed, meta);
-    decrypt96(left, right, meta);
+    derive_round_keys(enc_seed, k1, k2, k3, k4, k5, k6, k7, k8);
+    decrypt96(left, right, k1, k2, k3, k4, k5, k6, k7, k8);
     value[95:48] = left;
     value[47:0]  = right;
 }
