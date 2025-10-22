@@ -19,58 +19,58 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 
-header ethernet_t { // 96 bits
-    macAddr_t dstAddr;   // yes: reveal target device identity or multicast group
-    macAddr_t srcAddr;   // yes: reveal source device identity
-    bit<16>   etherType; // no: will be a fixed value (TYPE_CUSTOM)
+header ethernet_t {
+    macAddr_t dstAddr;
+    macAddr_t srcAddr;
+    bit<16>   etherType;
 }
 
-header ipv4_t { // 84 bits + 8 bits for protocol
-    bit<4>    version;        // yes: reveal IP version
+header ipv4_t {
+    bit<4>    version;
     bit<4>    ihl;
     bit<8>    diffserv;
     bit<16>   totalLen;
-    bit<16>   identification; // maybe: reveal ordering and link to the same host
-    bit<3>    flags;          // yes: allow packet reconstruction
-    bit<13>   fragOffset;     // yes: allow packet reconstruction
+    bit<16>   identification;
+    bit<3>    flags;
+    bit<13>   fragOffset;
     bit<8>    ttl;
-    bit<8>    protocol;       // yes: reveal the next protocol
+    bit<8>    protocol;
     bit<16>   hdrChecksum;
-    ip4Addr_t srcAddr;        // yes: reveal sender IP address
-    ip4Addr_t dstAddr;        // yes: reveal target IP address
+    ip4Addr_t srcAddr;
+    ip4Addr_t dstAddr;
 }
 
-header custom_t { // 0 bits + 16 bits for the etherType
+header custom_t {
     bit<128> tag;
     bit<32>  version;
-    bit<16>  etherType; // yes: reveal original etherType (and thus the next protocol)
+    bit<16>  etherType;
 }
 
-header icmp_t { // 48 bits
-    bit<8>  type;         // yes: reveal ICMP type
-    bit<8>  code;         // yes: reveal reason for message
+header icmp_t {
+    bit<8>  type;
+    bit<8>  code;
     bit<16> checksum;
-    bit<32> restOfHeader; // yes: reveal info depending on type/code
+    bit<32> restOfHeader;
 }
 
-header udp_t { // 32 bits
-    bit<16> srcPort; // yes: reveal application/service identity if not ephemeral
-    bit<16> dstPort; // yes: reveal application/service identity
+header udp_t {
+    bit<16> srcPort;
+    bit<16> dstPort;
     bit<16> length;
     bit<16> checksum;
 }
 
-header tcp_t { // 121 bits (or 124 bits if merged reserved with flags)
-    bit<16> srcPort;   // yes: reveal application/service identity if not ephemeral
-    bit<16> dstPort;   // yes: reveal application/service identity
-    bit<32> seqNo;     // yes: reveal ordering and link to the same host
-    bit<32> ackNo;     // yes: reveal ordering and link to the same host
+header tcp_t {
+    bit<16> srcPort;
+    bit<16> dstPort;
+    bit<32> seqNo;
+    bit<32> ackNo;
     bit<4>  dataOffset;
-    bit<3>  reserved;  // no: only if required to merge to the flag
-    bit<9>  flags;     // yes: reveal connection state
-    bit<16> window;    // maybe: reveal flow control state
+    bit<3>  reserved;
+    bit<9>  flags;
+    bit<16> window;
     bit<16> checksum;
-    bit<16> urgentPtr; // yes: reveal if used or not
+    bit<16> urgentPtr;
 }
 
 struct metadata {
@@ -167,7 +167,7 @@ void encrypt_headers(inout headers hdr, in bit<128> enc_seed) {
         fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.ackNo;
         fields_124 = (fields_124 << 3)  | (bit<124>)hdr.tcp.reserved;
         fields_124 = (fields_124 << 9)  | (bit<124>)hdr.tcp.flags;
-        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.urgentPtr;
+        fields_124 = (fields_124 << 16) | (bit<124>)hdr.tcp.urgentPtr;
 
         feistel_encrypt_124(fields_124, enc_seed);
         hdr.tcp.srcPort   = fields_124[123:108];
@@ -228,7 +228,7 @@ void decrypt_headers(inout headers hdr, in bit<128> enc_seed) {
         fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.ackNo;
         fields_124 = (fields_124 << 3)  | (bit<124>)hdr.tcp.reserved;
         fields_124 = (fields_124 << 9)  | (bit<124>)hdr.tcp.flags;
-        fields_124 = (fields_124 << 32) | (bit<124>)hdr.tcp.urgentPtr;
+        fields_124 = (fields_124 << 16) | (bit<124>)hdr.tcp.urgentPtr;
 
         feistel_decrypt_124(fields_124, enc_seed);
         hdr.tcp.srcPort   = fields_124[123:108];
